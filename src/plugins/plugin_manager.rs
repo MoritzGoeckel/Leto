@@ -1,10 +1,9 @@
 use super::hooks::Hook;
 use super::plugin::Plugin;
+use crate::config::Config;
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::fs::File;
 use std::io::{self, BufReader};
-use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 pub struct PluginManager {
@@ -14,25 +13,14 @@ pub struct PluginManager {
 }
 
 impl PluginManager {
-    pub fn start() -> io::Result<Self> {
-        let config_path = std::env::current_dir()?.join("atlas.json");
-        let config: Value = serde_json::from_reader(File::open(config_path)?)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    pub fn start(config: &Config) -> io::Result<Self> {
         let mut manager = Self {
             plugins: HashMap::new(),
             hooks: HashMap::new(),
             next_plugin_id: 0,
         };
 
-        let plugin_paths = config["plugins"].as_array().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "`plugins` must be an array")
-        })?;
-
-        for path in plugin_paths {
-            let path = path.as_str().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "plugin path must be a string")
-            })?;
-            let path = PathBuf::from(path);
+        for path in config.plugin_paths()? {
             let mut child = Command::new(&path)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
