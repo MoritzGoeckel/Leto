@@ -43,3 +43,10 @@ impl Plugin {
         Ok(response["result"].clone())
     }
 }
+
+impl Drop for Plugin {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}

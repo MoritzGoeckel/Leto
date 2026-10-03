@@ -79,8 +79,8 @@ impl PluginManager {
         Ok(())
     }
 
-    pub fn hooks(&self) -> &HashMap<Hook, Vec<usize>> {
-        &self.hooks
+    pub fn call_hook_without_params(&mut self, hook: Hook) -> io::Result<Vec<Value>> {
+        self.call_hook(hook, json!({}))
     }
 
     pub fn call_hook(&mut self, hook: Hook, params: Value) -> io::Result<Vec<Value>> {

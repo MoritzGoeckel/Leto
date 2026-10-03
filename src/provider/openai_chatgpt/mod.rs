@@ -12,7 +12,7 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
-pub use login_workflow::{load_credential, login_and_save};
+pub use login_workflow::login_and_save;
 pub use oauth::{ChatGptLogin, Credential, begin_login, exchange_callback, exchange_code, refresh};
 pub use responses::stream;
 
@@ -22,9 +22,12 @@ pub struct OpenAiChatGpt {
 }
 
 impl OpenAiChatGpt {
-    pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
-        let config = Config::load()?;
-        let credential = load_credential(&config)?;
+    pub fn init(config: Config) -> Result<Self, Box<dyn std::error::Error>> {
+        let credential = config
+            .provider("openai")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()?;
         Ok(Self { config, credential })
     }
 }

@@ -9,15 +9,6 @@ use crate::ui::Ui;
 
 use super::{Credential, begin_login, exchange_callback};
 
-pub fn load_credential(config: &Config) -> Result<Option<Credential>, Box<dyn std::error::Error>> {
-    config
-        .provider("openai")
-        .cloned()
-        .map(serde_json::from_value)
-        .transpose()
-        .map_err(Into::into)
-}
-
 pub fn login_and_save(
     config: &mut Config,
     ui: &mut dyn Ui,
