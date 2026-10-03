@@ -1,75 +1,54 @@
 pub mod config;
 pub mod core;
-pub mod openai_chatgpt;
 mod plugins;
+pub mod provider;
+pub mod ui;
 
-use core::{
-    AssistantContent, Context, InputModality, Message, Model, ModelCost, StreamOptions,
-    UserContent, UserMessage,
-};
-use std::io::{self, Write};
+use core::{Context, Message, StreamOptions, UserContent, UserMessage};
+use provider::{AuthError, Provider, openai_chatgpt::OpenAiChatGpt};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut config = config::Config::load()?;
-    let mut credential = match openai_chatgpt::load_credential(&config)? {
-        Some(credential) if credential.expires > now_ms() => {
-            println!("Using saved ChatGPT sign-in.");
-            credential
+    let mut provider = OpenAiChatGpt::load()?;
+    let mut ui = ui::tui::Tui;
+    if let Err(error) = provider.auth_refresh() {
+        match error {
+            AuthError::NotLoggedIn => provider.auth_login(&mut ui)?,
+            error => return Err(error.into()),
         }
-        Some(credential) => match openai_chatgpt::refresh(&credential) {
-            Ok(credential) => {
-                openai_chatgpt::save_credential(&mut config, &credential)?;
-                credential
-            }
-            Err(error) => {
-                eprintln!("Saved ChatGPT sign-in could not be refreshed: {error}");
-                openai_chatgpt::login_and_save(&mut config)?
-            }
-        },
-        None => openai_chatgpt::login_and_save(&mut config)?,
-    };
-    let model = Model {
-        id: "gpt-6-luna".into(),
-        name: "GPT-6 Luna".into(),
-        api: "openai-responses".into(),
-        provider: "openai".into(),
-        base_url: "https://api.openai.com/v1".into(),
-        input: vec![InputModality::Text, InputModality::Image],
-        input_limits: None,
-        cost: ModelCost::default(),
-        model_type: None,
-        reasoning: true,
-        thinking_level_map: None,
-        prompt_cache: None,
-        context_window: 272_000,
-        max_tokens: 128_000,
-        headers: None,
-        sampling_params: None,
-        compat: None,
-    };
+    }
+    run(&mut provider, &mut ui)
+}
+
+fn run(
+    provider: &mut impl Provider,
+    ui: &mut dyn ui::Ui,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let model = provider
+        .get_models()
+        .into_values()
+        .next()
+        .expect("provider has no models");
     let mut context = Context::default();
-    println!("Signed in. Enter a message, or /exit to quit.");
+    let notice_id = ui.inform_blocking("Signed in. Enter a message, or /exit to quit.");
+    ui.close(notice_id);
     loop {
-        let input = read_line("you> ")?;
+        let input = ui.get_input("you> ")?;
         if input == "/exit" {
             break;
         }
-        if credential.expires <= now_ms() {
-            credential = openai_chatgpt::refresh(&credential)?;
-            openai_chatgpt::save_credential(&mut config, &credential)?;
+        if let Err(error) = provider.auth_refresh() {
+            match error {
+                AuthError::NotLoggedIn => provider.auth_login(ui)?,
+                error => return Err(error.into()),
+            }
         }
-        context.messages.push(Message::User(UserMessage {
+        let user_message = Message::User(UserMessage {
             content: UserContent::Text(input),
-            timestamp: now_ms(),
-        }));
-        let events = openai_chatgpt::stream(
-            &model,
-            &context,
-            &StreamOptions {
-                api_key: Some(credential.access.clone()),
-                ..StreamOptions::default()
-            },
-        )?;
+            timestamp: core::now_ms(),
+        });
+        ui.add_message(&user_message);
+        context.messages.push(user_message);
+        let events = provider.stream(&model, &context, &StreamOptions::default())?;
         let message = events
             .into_iter()
             .find_map(|event| match event {
@@ -78,27 +57,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ => None,
             })
             .expect("Responses API returned no assistant message");
-        for block in &message.content {
-            if let AssistantContent::Text(text) = block {
-                println!("assistant> {}", text.text);
-            }
-        }
-        context.messages.push(Message::Assistant(message));
+        let assistant_message = Message::Assistant(message);
+        ui.add_message(&assistant_message);
+        context.messages.push(assistant_message);
     }
     Ok(())
-}
-
-fn read_line(prompt: &str) -> io::Result<String> {
-    print!("{prompt}");
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_owned())
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
 }

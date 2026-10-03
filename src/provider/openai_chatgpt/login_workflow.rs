@@ -5,6 +5,7 @@ use std::{
 };
 
 use crate::config::Config;
+use crate::ui::Ui;
 
 use super::{Credential, begin_login, exchange_callback};
 
@@ -17,39 +18,42 @@ pub fn load_credential(config: &Config) -> Result<Option<Credential>, Box<dyn st
         .map_err(Into::into)
 }
 
-pub fn login_and_save(config: &mut Config) -> Result<Credential, Box<dyn std::error::Error>> {
+pub fn login_and_save(
+    config: &mut Config,
+    ui: &mut dyn Ui,
+) -> Result<Credential, Box<dyn std::error::Error>> {
     let login = begin_login("00000000-0000-4000-8000-000000000001");
-    let use_listener = read_line("Use SSH port forwarding to receive the callback? [y/N] ")? == "y";
+    let use_listener =
+        ui.get_input("Use SSH port forwarding to receive the callback? [y/N] ")? == "y";
     let callback_receiver = if use_listener {
         Some(start_callback_listener()?)
     } else {
         None
     };
-    println!(
-        "Open this URL to sign in with ChatGPT:\n{}",
-        login.authorization_url
-    );
+    let message = if use_listener {
+        format!(
+            "Open this URL to sign in with ChatGPT:\n{}\nForward port 1455 from your local computer with: ssh -L 1455:127.0.0.1:1455 <remote-host>\nWaiting for the browser callback on remote port 1455...",
+            login.authorization_url
+        )
+    } else {
+        format!(
+            "Open this URL to sign in with ChatGPT:\n{}",
+            login.authorization_url
+        )
+    };
+    let blocking_id = ui.inform_blocking(&message);
     let callback_url = if let Some(receiver) = callback_receiver {
-        println!(
-            "Forward port 1455 from your local computer with: ssh -L 1455:127.0.0.1:1455 <remote-host>"
-        );
-        println!("Waiting for the browser callback on remote port 1455...");
         receiver.recv()?
     } else {
-        read_line("After approving, paste the full callback URL from your browser address bar: ")?
+        ui.get_input(
+            "After approving, paste the full callback URL from your browser address bar: ",
+        )?
     };
+    ui.close(blocking_id);
     let credential = exchange_callback(&login, &callback_url)?;
-    save_credential(config, &credential)?;
-    Ok(credential)
-}
-
-pub fn save_credential(
-    config: &mut Config,
-    credential: &Credential,
-) -> Result<(), Box<dyn std::error::Error>> {
-    config.set_provider("openai", serde_json::to_value(credential)?);
+    config.set_provider("openai", serde_json::to_value(&credential)?);
     config.save()?;
-    Ok(())
+    Ok(credential)
 }
 
 fn start_callback_listener() -> io::Result<std::sync::mpsc::Receiver<String>> {
@@ -67,12 +71,4 @@ fn start_callback_listener() -> io::Result<std::sync::mpsc::Receiver<String>> {
         sender.send(callback_url).unwrap();
     });
     Ok(receiver)
-}
-
-fn read_line(prompt: &str) -> io::Result<String> {
-    print!("{prompt}");
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_owned())
 }

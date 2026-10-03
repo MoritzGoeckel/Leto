@@ -387,8 +387,6 @@ pub enum NestedToolCallStatus {
 #[serde(rename_all = "camelCase")]
 pub struct StreamOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub headers: Option<BTreeMap<String, Option<String>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,

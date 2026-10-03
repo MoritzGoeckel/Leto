@@ -1,3 +1,4 @@
+use crate::core::now_ms;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::{RngCore, rngs::OsRng};
 use reqwest::blocking::Client;
@@ -174,11 +175,4 @@ fn credential(token: TokenResponse, client_id: &str) -> Result<Credential, reqwe
         client_id: client_id.to_owned(),
         scopes,
     })
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
 }

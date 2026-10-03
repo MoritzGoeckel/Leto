@@ -1,19 +1,16 @@
 use crate::core::{
     AssistantContent, AssistantMessage, CompletionReason, Context, Model, StopReason,
-    StreamOptions, TextContent, ThinkingContent, ToolCall, Usage,
+    StreamOptions, TextContent, ThinkingContent, ToolCall, Usage, now_ms,
 };
 use reqwest::blocking::Client;
 use serde_json::{Value, json};
 
 pub fn stream(
+    token: &str,
     model: &Model,
     context: &Context,
     options: &StreamOptions,
 ) -> Result<Vec<crate::core::AssistantMessageEvent>, Box<dyn std::error::Error>> {
-    let token = options
-        .api_key
-        .as_deref()
-        .ok_or("missing OpenAI access token")?;
     let mut input = Vec::new();
     for message in &context.messages {
         match message {
@@ -171,10 +168,4 @@ fn system_text(content: &crate::core::SystemContent) -> String {
 }
 fn user_content(content: &crate::core::UserContent) -> Value {
     match content { crate::core::UserContent::Text(text) => json!([{ "type":"input_text", "text":text }]), crate::core::UserContent::Blocks(blocks) => json!(blocks.iter().map(|block| match block { crate::core::UserContentBlock::Text(text) => json!({"type":"input_text","text":text.text}), crate::core::UserContentBlock::Image(image) => json!({"type":"input_image","image_url":format!("data:{};base64,{}",image.mime_type,image.data),"detail":"auto"}) }).collect::<Vec<_>>()) }
-}
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
 }
