@@ -1,7 +1,8 @@
 use std::{
-    io::{self, Read, Write},
+    io::{self, BufRead, BufReader, Write},
     net::TcpListener,
     thread,
+    time::Duration,
 };
 
 use crate::config::Config;
@@ -23,7 +24,7 @@ pub fn login_and_save(
     };
     let message = if use_listener {
         format!(
-            "Open this URL to sign in with ChatGPT:\n{}\nForward port 1455 from your local computer with: ssh -L 1455:127.0.0.1:1455 <remote-host>\nWaiting for the browser callback on remote port 1455...",
+            "Open this URL to sign in with ChatGPT:\n{}\nForward port 1455 from your local computer with: ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:1455:127.0.0.1:1455 <remote-host>\nWaiting for the browser callback on remote port 1455...",
             login.authorization_url
         )
     } else {
@@ -51,15 +52,48 @@ fn start_callback_listener() -> io::Result<std::sync::mpsc::Receiver<String>> {
     let listener = TcpListener::bind("127.0.0.1:1455")?;
     let (sender, receiver) = std::sync::mpsc::channel();
     thread::spawn(move || {
-        let (mut connection, _) = listener.accept().unwrap();
-        let mut request = [0; 4096];
-        let bytes_read = connection.read(&mut request).unwrap();
-        let request = String::from_utf8_lossy(&request[..bytes_read]);
-        let callback_path = request.split_whitespace().nth(1).unwrap();
-        let callback_url = format!("http://127.0.0.1:1455{callback_path}");
-        let body = "ChatGPT sign-in complete. You can close this window.";
-        write!(connection, "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
-        sender.send(callback_url).unwrap();
+        loop {
+            let (mut connection, _) = listener.accept().unwrap();
+            connection
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = String::new();
+            let mut reader = BufReader::new(&mut connection);
+            match reader.read_line(&mut request) {
+                Ok(0) => continue,
+                Ok(_) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    continue;
+                }
+                Err(error) => panic!("Failed to read OAuth callback: {error}"),
+            }
+            let callback_path = request.split_whitespace().nth(1).unwrap();
+            let is_callback = callback_path.starts_with("/auth/callback?");
+            let callback_url = format!("http://127.0.0.1:1455{callback_path}");
+            let mut header = String::new();
+            loop {
+                header.clear();
+                let bytes_read = reader.read_line(&mut header).unwrap();
+                if bytes_read == 0 || header == "\r\n" {
+                    break;
+                }
+            }
+            let body = if is_callback {
+                "ChatGPT callback received. You can close this window."
+            } else {
+                "Atlas callback listener is reachable. Complete sign-in using the authorization URL in your terminal."
+            };
+            write!(connection, "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            if is_callback {
+                sender.send(callback_url).unwrap();
+                break;
+            }
+        }
     });
     Ok(receiver)
 }
