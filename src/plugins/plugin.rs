@@ -59,37 +59,53 @@ impl Plugin {
                     return;
                 }
             };
-            if message["type"] == "invoke" {
-                let name = message["name"].as_str().unwrap();
-                let id = message["id"].clone();
-                let method = host_methods.lock().unwrap().get(name).cloned();
-                let value =
-                    method.map(|method| (method.lock().unwrap())(message["params"].clone()));
-                let response = match value {
-                    Some(Ok(value)) => {
-                        json!({"type":"return", "id":id, "name":name, "value":value})
+            match message["type"].as_str().unwrap() {
+                "invoke" => match Self::handle_invoke(&message, &stdin, &host_methods) {
+                    Ok(()) => {}
+                    Err(error) => {
+                        let _ = sender.send(Err(error));
+                        return;
                     }
-                    Some(Err(error)) => {
-                        json!({"type":"return", "id":id, "name":name, "error":{"message":error.to_string()}})
+                },
+                "return" => {
+                    if sender.send(Ok(message)).is_err() {
+                        return;
                     }
-                    None => {
-                        json!({"type":"return", "id":id, "name":name, "error":{"message":format!("unknown host method: {name}")}})
-                    }
-                };
-                if let Err(error) = Self::send(&stdin, response) {
-                    let _ = sender.send(Err(error));
+                }
+                message_type => {
+                    let _ = sender.send(Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("unexpected plugin message type: {message_type}"),
+                    )));
                     return;
                 }
-                continue;
-            }
-            if sender.send(Ok(message)).is_err() {
-                return;
             }
         }
         let _ = sender.send(Err(io::Error::new(
             io::ErrorKind::UnexpectedEof,
             "plugin stdout closed",
         )));
+    }
+
+    fn handle_invoke(
+        message: &Value,
+        stdin: &Arc<Mutex<ChildStdin>>,
+        host_methods: &HostMethods,
+    ) -> io::Result<()> {
+        let name = message["name"].as_str().unwrap();
+        let id = message["id"].clone();
+        let method = host_methods.lock().unwrap().get(name).cloned();
+        let value = method.map(|method| (method.lock().unwrap())(message["params"].clone()));
+        let response = match value {
+            Some(Ok(value)) => json!({"type":"return", "id":id, "name":name, "value":value}),
+            Some(Err(error)) => {
+                json!({"type":"return", "id":id, "name":name, "error":{"message":error.to_string()}})
+            }
+            None => {
+                json!({"type":"return", "id":id, "name":name, "error":{"message":format!("unknown host method: {name}")}})
+            }
+        };
+        Self::send(stdin, response)
     }
 
     pub(crate) fn invoke(&mut self, name: &str, params: Value) -> io::Result<()> {
@@ -112,7 +128,7 @@ impl Plugin {
         self.next_id += 1;
         Self::send(
             &self.stdin,
-            json!({"type":"hook", "id":id, "name":name, "params":params}),
+            json!({"type":"invoke", "id":id, "name":name, "params":params}),
         )?;
         Ok(id)
     }
