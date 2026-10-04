@@ -1,3 +1,4 @@
+// Notifications needing the UI mutex wait until blocking input returns.
 use std::io::{self, Write};
 
 use crate::core::{
