@@ -30,26 +30,32 @@ events! {
     OnExit => "on_exit",
 }
 
-use super::plugin::Plugin;
+use super::plugin::{HostMethod, HostMethods, Plugin};
 use crate::config::Config;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{self, BufReader};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 pub struct PluginManager {
     plugins: HashMap<usize, Plugin>,
     subscriptions: HashMap<Event, Vec<usize>>,
     next_plugin_id: usize,
+    host_methods: HostMethods,
 }
 
 impl PluginManager {
-    pub fn start(config: &Config) -> io::Result<Self> {
-        let mut events = Self {
+    pub fn new() -> Self {
+        Self {
             plugins: HashMap::new(),
             subscriptions: HashMap::new(),
             next_plugin_id: 0,
-        };
+            host_methods: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub fn start(&mut self, config: &Config) -> io::Result<()> {
         for path in config.plugin_paths()? {
             let mut child = Command::new(&path)
                 .stdin(Stdio::piped())
@@ -57,11 +63,11 @@ impl PluginManager {
                 .spawn()?;
             let stdin = child.stdin.take().unwrap();
             let stdout = BufReader::new(child.stdout.take().unwrap());
-            let plugin = Plugin::new(child, stdin, stdout);
-            events.plugins.insert(events.next_plugin_id, plugin);
-            events.next_plugin_id += 1;
+            let plugin = Plugin::new(child, stdin, stdout, Arc::clone(&self.host_methods));
+            self.plugins.insert(self.next_plugin_id, plugin);
+            self.next_plugin_id += 1;
         }
-        Ok(events)
+        Ok(())
     }
 
     pub fn init_plugins(&mut self) -> io::Result<()> {
@@ -71,6 +77,18 @@ impl PluginManager {
             self.init_plugin(plugin_id)?;
         }
         Ok(())
+    }
+
+    pub fn register_method(
+        &mut self,
+        name: impl Into<String>,
+        method: impl FnMut(Value) -> io::Result<Value> + Send + 'static,
+    ) {
+        let method: HostMethod = Box::new(method);
+        self.host_methods
+            .lock()
+            .unwrap()
+            .insert(name.into(), Arc::new(Mutex::new(method)));
     }
 
     fn init_plugin(&mut self, plugin_id: usize) -> io::Result<()> {

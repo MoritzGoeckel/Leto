@@ -7,24 +7,28 @@ pub mod ui;
 use core::{Context, Message, StreamOptions, UserContent, UserMessage};
 use plugins::PluginManager;
 use provider::{AuthError, Provider, openai_chatgpt::OpenAiChatGpt};
+use std::sync::{Arc, Mutex};
+use ui::Ui;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = config::Config::load()?;
-    let mut plugins = PluginManager::start(&config)?;
+    let ui = Arc::new(Mutex::new(ui::tui::Tui));
+    let mut plugins = PluginManager::new();
+    ui::tui::Tui::register_plugin_methods(Arc::clone(&ui), &mut plugins);
+    plugins.start(&config)?;
     let mut provider = OpenAiChatGpt::init(config)?;
-    let mut ui = ui::tui::Tui;
     if let Err(error) = provider.auth_refresh() {
         match error {
-            AuthError::NotLoggedIn => provider.auth_login(&mut ui)?,
+            AuthError::NotLoggedIn => provider.auth_login(&mut *ui.lock().unwrap())?,
             error => return Err(error.into()),
         }
     }
-    run(&mut provider, &mut ui, &mut plugins)
+    run(&mut provider, Arc::clone(&ui), &mut plugins)
 }
 
 fn run(
     provider: &mut impl Provider,
-    ui: &mut dyn ui::Ui,
+    ui: Arc<Mutex<ui::tui::Tui>>,
     plugins: &mut PluginManager,
 ) -> Result<(), Box<dyn std::error::Error>> {
     plugins.init_plugins()?;
@@ -36,16 +40,19 @@ fn run(
         .expect("provider has no models");
     let mut context = Context::default();
     plugins.notify_new_conversation()?;
-    let notice_id = ui.inform_blocking("Signed in. Enter a message, or /exit to quit.");
-    ui.close(notice_id);
+    let notice_id = ui
+        .lock()
+        .unwrap()
+        .inform_blocking("Signed in. Enter a message, or /exit to quit.");
+    ui.lock().unwrap().close(notice_id);
     loop {
-        let input = ui.get_input("you> ")?;
+        let input = ui.lock().unwrap().get_input("you> ")?;
         if input == "/exit" {
             break;
         }
         if let Err(error) = provider.auth_refresh() {
             match error {
-                AuthError::NotLoggedIn => provider.auth_login(ui)?,
+                AuthError::NotLoggedIn => provider.auth_login(&mut *ui.lock().unwrap())?,
                 error => return Err(error.into()),
             }
         }
@@ -55,7 +62,7 @@ fn run(
         };
         let user_message = plugins.transform_user_message(user_message)?;
         let user_message = Message::User(user_message);
-        ui.add_message(&user_message);
+        ui.lock().unwrap().add_message(&user_message);
         context.messages.push(user_message);
         let events = provider.stream(&model, &context, &StreamOptions::default())?;
         let message = events
@@ -68,7 +75,7 @@ fn run(
             .expect("Responses API returned no assistant message");
         plugins.notify_assistant_message(&message)?;
         let assistant_message = Message::Assistant(message);
-        ui.add_message(&assistant_message);
+        ui.lock().unwrap().add_message(&assistant_message);
         context.messages.push(assistant_message);
     }
     plugins.notify_exit()?;
