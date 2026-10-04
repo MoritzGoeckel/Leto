@@ -1,7 +1,37 @@
-use super::hooks::Hook;
+macro_rules! events {
+    ($($variant:ident => $name:literal),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+        pub(super) enum Event {
+            $($variant),+
+        }
+
+        impl Event {
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name),+
+                }
+            }
+
+            pub fn from_str(name: &str) -> Option<Self> {
+                match name {
+                    $($name => Some(Self::$variant),)+
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+events! {
+    OnInit => "on_init",
+    OnNewConversation => "on_new_conversation",
+    OnUserMessage => "on_user_message",
+    OnAssistantMessage => "on_assistant_message",
+    OnExit => "on_exit",
+}
+
 use super::plugin::Plugin;
 use crate::config::Config;
-use crate::core::UserMessage;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{self, BufReader};
@@ -9,18 +39,17 @@ use std::process::{Command, Stdio};
 
 pub struct PluginManager {
     plugins: HashMap<usize, Plugin>,
-    hooks: HashMap<Hook, Vec<usize>>,
+    subscriptions: HashMap<Event, Vec<usize>>,
     next_plugin_id: usize,
 }
 
 impl PluginManager {
     pub fn start(config: &Config) -> io::Result<Self> {
-        let mut manager = Self {
+        let mut events = Self {
             plugins: HashMap::new(),
-            hooks: HashMap::new(),
+            subscriptions: HashMap::new(),
             next_plugin_id: 0,
         };
-
         for path in config.plugin_paths()? {
             let mut child = Command::new(&path)
                 .stdin(Stdio::piped())
@@ -29,11 +58,10 @@ impl PluginManager {
             let stdin = child.stdin.take().unwrap();
             let stdout = BufReader::new(child.stdout.take().unwrap());
             let plugin = Plugin::new(child, stdin, stdout);
-            manager.plugins.insert(manager.next_plugin_id, plugin);
-            manager.next_plugin_id += 1;
+            events.plugins.insert(events.next_plugin_id, plugin);
+            events.next_plugin_id += 1;
         }
-
-        Ok(manager)
+        Ok(events)
     }
 
     pub fn init_plugins(&mut self) -> io::Result<()> {
@@ -45,27 +73,22 @@ impl PluginManager {
         Ok(())
     }
 
-    pub fn init_plugin(&mut self, plugin_id: usize) -> io::Result<()> {
-        let plugin = self.plugins.get_mut(&plugin_id).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("plugin {plugin_id} not found"),
-            )
-        })?;
+    fn init_plugin(&mut self, plugin_id: usize) -> io::Result<()> {
+        let plugin = self.plugins.get_mut(&plugin_id).unwrap();
         let result = plugin.invoke_and_wait("init", json!({}))?;
-        let hooks = result["hooks"].as_array().ok_or_else(|| {
+        let events = result["hooks"].as_array().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
                 "plugin init `hooks` must be an array",
             )
         })?;
-        plugin.hooks = hooks
+        plugin.hooks = events
             .iter()
             .map(|value| {
                 let name = value.as_str().ok_or_else(|| {
                     io::Error::new(io::ErrorKind::InvalidData, "plugin hook must be a string")
                 })?;
-                Hook::from_str(name).ok_or_else(|| {
+                Event::from_str(name).ok_or_else(|| {
                     io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("unknown plugin hook: {name}"),
@@ -74,41 +97,37 @@ impl PluginManager {
             })
             .collect::<io::Result<Vec<_>>>()?;
 
-        for hook in &plugin.hooks {
-            self.hooks.entry(*hook).or_default().push(plugin_id);
+        for event in &plugin.hooks {
+            self.subscriptions
+                .entry(*event)
+                .or_default()
+                .push(plugin_id);
         }
         Ok(())
     }
 
-    pub fn call_hook_without_params(&mut self, hook: Hook) -> io::Result<()> {
-        self.call_hook(hook, json!({}))
+    pub(super) fn invoke_without_params(&mut self, event: Event) -> io::Result<()> {
+        self.invoke(event, json!({}))
     }
 
-    pub fn call_hook(&mut self, hook: Hook, params: Value) -> io::Result<()> {
-        for plugin_id in self.hooks.get(&hook).cloned().unwrap_or_default() {
+    pub(super) fn invoke(&mut self, event: Event, params: Value) -> io::Result<()> {
+        for plugin_id in self.subscriptions.get(&event).cloned().unwrap_or_default() {
             self.plugins
                 .get_mut(&plugin_id)
                 .unwrap()
-                .invoke(hook.as_str(), params.clone())?;
+                .invoke(event.as_str(), params.clone())?;
         }
         Ok(())
     }
 
-    pub fn rewrite_user_message(&mut self, mut message: UserMessage) -> io::Result<UserMessage> {
-        for plugin_id in self
-            .hooks
-            .get(&Hook::OnUserMessage)
-            .cloned()
-            .unwrap_or_default()
-        {
-            let value = self
+    pub(super) fn invoke_wait(&mut self, event: Event, mut params: Value) -> io::Result<Value> {
+        for plugin_id in self.subscriptions.get(&event).cloned().unwrap_or_default() {
+            params = self
                 .plugins
                 .get_mut(&plugin_id)
                 .unwrap()
-                .invoke_and_wait(Hook::OnUserMessage.as_str(), json!({"message": &message}))?;
-            message = serde_json::from_value(value)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+                .invoke_and_wait(event.as_str(), params)?;
         }
-        Ok(message)
+        Ok(params)
     }
 }

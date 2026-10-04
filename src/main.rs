@@ -5,9 +5,8 @@ pub mod provider;
 pub mod ui;
 
 use core::{Context, Message, StreamOptions, UserContent, UserMessage};
-use plugins::{Hook, PluginManager};
+use plugins::PluginManager;
 use provider::{AuthError, Provider, openai_chatgpt::OpenAiChatGpt};
-use serde_json::json;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = config::Config::load()?;
@@ -29,14 +28,14 @@ fn run(
     plugins: &mut PluginManager,
 ) -> Result<(), Box<dyn std::error::Error>> {
     plugins.init_plugins()?;
-    plugins.call_hook_without_params(Hook::OnInit)?;
+    plugins.notify_init()?;
     let model = provider
         .get_models()
         .into_values()
         .next()
         .expect("provider has no models");
     let mut context = Context::default();
-    plugins.call_hook_without_params(Hook::OnNewConversation)?;
+    plugins.notify_new_conversation()?;
     let notice_id = ui.inform_blocking("Signed in. Enter a message, or /exit to quit.");
     ui.close(notice_id);
     loop {
@@ -54,7 +53,7 @@ fn run(
             content: UserContent::Text(input),
             timestamp: core::now_ms(),
         };
-        let user_message = plugins.rewrite_user_message(user_message)?;
+        let user_message = plugins.transform_user_message(user_message)?;
         let user_message = Message::User(user_message);
         ui.add_message(&user_message);
         context.messages.push(user_message);
@@ -67,14 +66,11 @@ fn run(
                 _ => None,
             })
             .expect("Responses API returned no assistant message");
+        plugins.notify_assistant_message(&message)?;
         let assistant_message = Message::Assistant(message);
-        plugins.call_hook(
-            Hook::OnAssistantMessage,
-            json!({"message": assistant_message}),
-        )?;
         ui.add_message(&assistant_message);
         context.messages.push(assistant_message);
     }
-    plugins.call_hook_without_params(Hook::OnExit)?;
+    plugins.notify_exit()?;
     Ok(())
 }

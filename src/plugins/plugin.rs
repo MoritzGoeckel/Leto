@@ -1,4 +1,4 @@
-use super::hooks::Hook;
+use super::plugin_manager::Event;
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::io::{self, BufRead, BufReader, Write};
@@ -12,7 +12,7 @@ pub(crate) struct Plugin {
     incoming: Receiver<io::Result<Value>>,
     pending: VecDeque<Value>,
     next_id: u64,
-    pub(crate) hooks: Vec<Hook>,
+    pub(crate) hooks: Vec<Event>,
 }
 
 impl Plugin {

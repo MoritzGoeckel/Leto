@@ -8,7 +8,7 @@ input.on("line", (line) => {
   if (request.type === "hook" && request.name === "init") {
     process.stdout.write(`${JSON.stringify({ type: "return", id: request.id, name: request.name, value: { hooks: ["on_init"] } })}\n`);
   } else if (request.type === "hook" && request.name === "on_user_message") {
-    process.stdout.write(`${JSON.stringify({ type: "return", id: request.id, name: request.name, value: request.params.message })}\n`);
+    process.stdout.write(`${JSON.stringify({ type: "return", id: request.id, name: request.name, value: request.params })}\n`);
   } else if (request.type === "hook") {
     process.stdout.write(`${JSON.stringify({ type: "return", id: request.id, name: request.name, value: { message: "Example plugin initialized", params: request.params } })}\n`);
   } else {
