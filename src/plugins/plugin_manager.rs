@@ -1,6 +1,7 @@
 use super::hooks::Hook;
 use super::plugin::Plugin;
 use crate::config::Config;
+use crate::core::UserMessage;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::{self, BufReader};
@@ -51,7 +52,7 @@ impl PluginManager {
                 format!("plugin {plugin_id} not found"),
             )
         })?;
-        let result = plugin.request("init", json!({}))?;
+        let result = plugin.invoke_and_wait("init", json!({}))?;
         let hooks = result["hooks"].as_array().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -79,20 +80,35 @@ impl PluginManager {
         Ok(())
     }
 
-    pub fn call_hook_without_params(&mut self, hook: Hook) -> io::Result<Vec<Value>> {
+    pub fn call_hook_without_params(&mut self, hook: Hook) -> io::Result<()> {
         self.call_hook(hook, json!({}))
     }
 
-    pub fn call_hook(&mut self, hook: Hook, params: Value) -> io::Result<Vec<Value>> {
-        let mut results = Vec::new();
+    pub fn call_hook(&mut self, hook: Hook, params: Value) -> io::Result<()> {
         for plugin_id in self.hooks.get(&hook).cloned().unwrap_or_default() {
-            results.push(
-                self.plugins
-                    .get_mut(&plugin_id)
-                    .unwrap()
-                    .request(hook.as_str(), params.clone())?,
-            );
+            self.plugins
+                .get_mut(&plugin_id)
+                .unwrap()
+                .invoke(hook.as_str(), params.clone())?;
         }
-        Ok(results)
+        Ok(())
+    }
+
+    pub fn rewrite_user_message(&mut self, mut message: UserMessage) -> io::Result<UserMessage> {
+        for plugin_id in self
+            .hooks
+            .get(&Hook::OnUserMessage)
+            .cloned()
+            .unwrap_or_default()
+        {
+            let value = self
+                .plugins
+                .get_mut(&plugin_id)
+                .unwrap()
+                .invoke_and_wait(Hook::OnUserMessage.as_str(), json!({"message": &message}))?;
+            message = serde_json::from_value(value)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        }
+        Ok(message)
     }
 }

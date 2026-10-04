@@ -50,11 +50,12 @@ fn run(
                 error => return Err(error.into()),
             }
         }
-        let user_message = Message::User(UserMessage {
+        let user_message = UserMessage {
             content: UserContent::Text(input),
             timestamp: core::now_ms(),
-        });
-        plugins.call_hook(Hook::OnUserMessage, json!({"message": user_message}))?;
+        };
+        let user_message = plugins.rewrite_user_message(user_message)?;
+        let user_message = Message::User(user_message);
         ui.add_message(&user_message);
         context.messages.push(user_message);
         let events = provider.stream(&model, &context, &StreamOptions::default())?;

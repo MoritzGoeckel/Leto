@@ -5,16 +5,14 @@ const input = readline.createInterface({ input: process.stdin });
 
 input.on("line", (line) => {
   const request = JSON.parse(line);
-  let result;
-
-  if (request.method === "init") {
-    result = { hooks: ["on_init"] };
-  } else if (request.method === "on_init") {
-    result = { message: "Example plugin initialized", params: request.params };
+  if (request.type === "hook" && request.name === "init") {
+    process.stdout.write(`${JSON.stringify({ type: "return", id: request.id, name: request.name, value: { hooks: ["on_init"] } })}\n`);
+  } else if (request.type === "hook" && request.name === "on_user_message") {
+    process.stdout.write(`${JSON.stringify({ type: "return", id: request.id, name: request.name, value: request.params.message })}\n`);
+  } else if (request.type === "hook") {
+    process.stdout.write(`${JSON.stringify({ type: "return", id: request.id, name: request.name, value: { message: "Example plugin initialized", params: request.params } })}\n`);
   } else {
-    process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32601, message: "Method not found" } })}\n`);
+    process.stdout.write(`${JSON.stringify({ type: "return", id: request.id, name: request.name, value: null })}\n`);
     return;
   }
-
-  process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: request.id, result })}\n`);
 });
