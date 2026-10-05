@@ -2,18 +2,17 @@ use crate::core::Tool;
 use crate::core::tools::ExecutableTool;
 use serde_json::{Value, json};
 
-pub fn make_default_tools() -> Vec<ExecutableTool> {
-    vec![ExecutableTool {
+pub(super) fn make_read_tool() -> ExecutableTool {
+    ExecutableTool {
         definition: Tool {
             name: "read".to_string(),
-            description: "Read a file, optionally selecting a range of character positions."
-                .to_string(),
+            description: "Read a file, optionally selecting a range of characters.".to_string(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "file": { "type": "string", "description": "Path to the file to read." },
-                    "from": { "type": "integer", "description": "First character position to include." },
-                    "to": { "type": "integer", "description": "Character position to stop before." }
+                    "offset": { "type": "integer", "description": "Number of characters to skip." },
+                    "limit": { "type": "integer", "description": "Maximum number of characters to read." }
                 },
                 "required": ["file"],
                 "additionalProperties": false
@@ -23,14 +22,14 @@ pub fn make_default_tools() -> Vec<ExecutableTool> {
         handler: Box::new(|_, parameters: Value| {
             let file = parameters["file"].as_str().unwrap();
             let content = std::fs::read_to_string(file).map_err(|error| error.to_string())?;
-            let from = parameters["from"].as_u64().unwrap_or(0) as usize;
-            let to = parameters["to"].as_u64().map(|position| position as usize);
+            let offset = parameters["offset"].as_u64().unwrap_or(0) as usize;
+            let limit = parameters["limit"].as_u64().map(|value| value as usize);
             let content: String = content
                 .chars()
-                .skip(from)
-                .take(to.map(|end| end.saturating_sub(from)).unwrap_or(usize::MAX))
+                .skip(offset)
+                .take(limit.unwrap_or(usize::MAX))
                 .collect();
-            Ok(json!({ "content": content }))
+            Ok(json!(content))
         }),
-    }]
+    }
 }

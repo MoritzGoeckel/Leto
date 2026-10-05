@@ -29,7 +29,7 @@ impl Loop {
             }
         }
         let mut tools = ToolRuntime::new(Arc::clone(&ui), config, Arc::clone(&plugins));
-        tools.add_tools(crate::core::default_tools::make_default_tools());
+        tools.add_tools(crate::core::tools::buildin::make_default_tools());
         Ok(Self {
             ui,
             plugins,

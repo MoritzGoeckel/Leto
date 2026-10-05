@@ -1,28 +1,11 @@
-use crate::{
-    config::Config,
-    core::{
-        AssistantContent, AssistantMessage, TextContent, Tool, ToolResultContent,
-        ToolResultMessage, now_ms,
-    },
-    plugins::PluginManager,
-    ui::{Ui, tui::Tui},
+use crate::core::tools::{ExecutableTool, ToolContext};
+use crate::core::{
+    AssistantContent, AssistantMessage, TextContent, ToolResultContent, ToolResultMessage, now_ms,
 };
+use crate::{config::Config, plugins::PluginManager, ui::tui::Tui};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-
-pub type ToolHandler = Box<dyn FnMut(&mut ToolContext<'_>, Value) -> Result<Value, String> + Send>;
-
-pub struct ExecutableTool {
-    pub definition: Tool,
-    pub handler: ToolHandler,
-}
-
-pub struct ToolContext<'a> {
-    pub ui: &'a mut dyn Ui,
-    pub config: &'a Config,
-    pub plugins: &'a mut PluginManager,
-}
 
 pub struct ToolRuntime {
     pub ui: Arc<Mutex<Tui>>,
