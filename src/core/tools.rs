@@ -24,10 +24,6 @@ pub struct ToolContext<'a> {
     pub plugins: &'a mut PluginManager,
 }
 
-pub fn make_default_tools() -> Vec<ExecutableTool> {
-    Vec::new()
-}
-
 pub struct ToolRuntime {
     pub ui: Arc<Mutex<Tui>>,
     pub config: Arc<Config>,
@@ -60,6 +56,8 @@ impl ToolRuntime {
     }
 
     pub fn run_tool_calls(&mut self, message: AssistantMessage) -> Vec<ToolResultMessage> {
+        // TODO: notify tool call
+        // TODO: Transform tool call
         message
             .content
             .into_iter()

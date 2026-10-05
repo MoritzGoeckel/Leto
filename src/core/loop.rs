@@ -7,14 +7,14 @@ use crate::{
 };
 use std::sync::{Arc, Mutex};
 
-pub struct Atlas {
+pub struct Loop {
     ui: Arc<Mutex<ui::tui::Tui>>,
     plugins: Arc<Mutex<PluginManager>>,
     provider: OpenAiChatGpt,
     tools: ToolRuntime,
 }
 
-impl Atlas {
+impl Loop {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let config = Arc::new(Config::load()?);
         let ui = Arc::new(Mutex::new(ui::tui::Tui));
@@ -29,7 +29,7 @@ impl Atlas {
             }
         }
         let mut tools = ToolRuntime::new(Arc::clone(&ui), config, Arc::clone(&plugins));
-        tools.add_tools(crate::core::tools::make_default_tools());
+        tools.add_tools(crate::core::default_tools::make_default_tools());
         Ok(Self {
             ui,
             plugins,

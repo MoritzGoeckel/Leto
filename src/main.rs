@@ -5,5 +5,5 @@ pub mod provider;
 pub mod ui;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    core::Atlas::new()?.start()
+    core::Loop::new()?.start()
 }
