@@ -89,30 +89,39 @@ impl Loop {
             );
             self.ui.lock().unwrap().add_message(&user_message);
             context.messages.push(user_message);
-            let events = self
-                .provider
-                .stream(&model, &context, &StreamOptions::default())?;
-            let message = events
-                .into_iter()
-                .find_map(|event| match event {
-                    crate::core::AssistantMessageEvent::Done { message, .. } => Some(message),
-                    crate::core::AssistantMessageEvent::Error { error, .. } => Some(error),
-                    _ => None,
-                })
-                .expect("Responses API returned no assistant message");
-            self.plugins
-                .lock()
-                .unwrap()
-                .notify_assistant_message(&message)?;
-            let assistant_message = Message::Assistant(message.clone());
-            self.ui.lock().unwrap().add_message(&assistant_message);
-            context.messages.push(assistant_message);
-            for result in self.tools.run_tool_calls(message) {
-                let result = Message::ToolResult(result);
-                // TODO: Notify tool result
-                // TODO: Transform tool result
-                self.ui.lock().unwrap().add_message(&result);
-                context.messages.push(result);
+            loop {
+                let events = self
+                    .provider
+                    .stream(&model, &context, &StreamOptions::default())?;
+                let message = events
+                    .into_iter()
+                    .find_map(|event| match event {
+                        crate::core::AssistantMessageEvent::Done { message, .. } => Some(message),
+                        crate::core::AssistantMessageEvent::Error { error, .. } => Some(error),
+                        _ => None,
+                    })
+                    .expect("Responses API returned no assistant message");
+                self.plugins
+                    .lock()
+                    .unwrap()
+                    .notify_assistant_message(&message)?;
+                let has_tool_calls = message
+                    .content
+                    .iter()
+                    .any(|content| matches!(content, crate::core::AssistantContent::ToolCall(_)));
+                let assistant_message = Message::Assistant(message.clone());
+                self.ui.lock().unwrap().add_message(&assistant_message);
+                context.messages.push(assistant_message);
+                for result in self.tools.run_tool_calls(message) {
+                    let result = Message::ToolResult(result);
+                    // TODO: Notify tool result
+                    // TODO: Transform tool result
+                    self.ui.lock().unwrap().add_message(&result);
+                    context.messages.push(result);
+                }
+                if !has_tool_calls {
+                    break;
+                }
             }
         }
         self.plugins.lock().unwrap().notify_exit()?;
