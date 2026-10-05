@@ -113,9 +113,8 @@ impl Loop {
                 self.ui.lock().unwrap().add_message(&assistant_message);
                 context.messages.push(assistant_message);
                 for result in self.tools.run_tool_calls(message) {
+                    let result = self.plugins.lock().unwrap().transform_tool_result(result)?;
                     let result = Message::ToolResult(result);
-                    // TODO: Notify tool result
-                    // TODO: Transform tool result
                     self.ui.lock().unwrap().add_message(&result);
                     context.messages.push(result);
                 }

@@ -27,6 +27,8 @@ events! {
     OnNewConversation => "on_new_conversation",
     OnUserMessage => "on_user_message",
     OnAssistantMessage => "on_assistant_message",
+    OnToolCall => "tool_call",
+    OnToolResult => "tool_result",
     OnExit => "on_exit",
 }
 
