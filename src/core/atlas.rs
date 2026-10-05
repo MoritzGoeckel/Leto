@@ -48,7 +48,13 @@ impl Atlas {
             .next()
             .expect("provider has no models");
         let mut context = Context {
-            tools: Some(self.tools.tools.values().cloned().collect()),
+            tools: Some(
+                self.tools
+                    .tools
+                    .values()
+                    .map(|tool| tool.definition.clone())
+                    .collect(),
+            ),
             ..Context::default()
         };
         self.plugins.lock().unwrap().notify_new_conversation()?;
