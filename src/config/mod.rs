@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 use std::{fs, io, path::PathBuf};
 
+#[derive(Clone)]
 pub struct Config {
     path: PathBuf,
     data: Value,
