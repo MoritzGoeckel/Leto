@@ -80,7 +80,7 @@ impl Loop {
             .inform("Signed in", "Enter a message, or /exit to quit.");
         while !self.exit {
             let input = self.ui.lock().unwrap().wait_for_next_prompt()?;
-            if input.starts_with('/') {
+            if is_command(&input) {
                 self.ui.lock().unwrap().on_command(&input);
                 self.run_command(&input)?;
                 continue;
@@ -186,4 +186,10 @@ impl Loop {
         self.context.messages.clear();
         Ok(())
     }
+}
+
+fn is_command(input: &str) -> bool {
+    input
+        .strip_prefix('/')
+        .is_some_and(|name| !name.is_empty() && name.bytes().all(|byte| byte.is_ascii_lowercase()))
 }
