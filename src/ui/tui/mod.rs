@@ -7,7 +7,9 @@ use std::{
 
 use crossterm::{
     cursor::MoveTo,
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
+    event::{
+        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+    },
     execute,
     style::Print,
     terminal::{disable_raw_mode, enable_raw_mode},
@@ -22,25 +24,39 @@ use ratatui::{
 };
 
 use super::Ui;
+mod text_input;
+use text_input::TextInput;
 
 #[derive(Clone)]
 pub struct Tui {
     state: Arc<(Mutex<State>, Condvar)>,
+    text_input: Arc<Mutex<TextInput>>,
 }
 
 #[derive(Default)]
 struct State {
     pending_lines: Vec<Line<'static>>,
     input_responses: VecDeque<String>,
-    input_buffer: String,
     notifications: Vec<(String, String)>,
     shutdown: bool,
 }
 
 impl Tui {
     pub fn new() -> Self {
+        let state = Arc::new((Mutex::new(State::default()), Condvar::new()));
+        let mut text_input = TextInput::new();
+        let submit_state = Arc::clone(&state);
+        text_input.on_submit(move |text| {
+            let (lock, wake) = &*submit_state;
+            lock.lock()
+                .unwrap()
+                .input_responses
+                .push_back(text.to_owned());
+            wake.notify_all();
+        });
         Self {
-            state: Arc::new((Mutex::new(State::default()), Condvar::new())),
+            state,
+            text_input: Arc::new(Mutex::new(text_input)),
         }
     }
 
@@ -59,6 +75,7 @@ impl Tui {
                 viewport: Viewport::Inline(3),
             },
         )?;
+        execute!(terminal.backend_mut(), EnableBracketedPaste)?;
         terminal.insert_before(1, |buffer| {
             Paragraph::new("").render(buffer.area, buffer);
         })?;
@@ -75,6 +92,7 @@ impl Tui {
                 Err(error) => break Err(error),
             }
         };
+        execute!(terminal.backend_mut(), DisableBracketedPaste)?;
         disable_raw_mode()?;
         let last_row = terminal.size()?.height - 1;
         execute!(terminal.backend_mut(), MoveTo(0, last_row), Print("\r\n"))?;
@@ -131,6 +149,11 @@ impl Tui {
                 paragraph.render(buffer.area, buffer);
             })?;
         }
+        let notifications = self.state.0.lock().unwrap().notifications.clone();
+        let (input_text, cursor_column) = {
+            let text_input = self.text_input.lock().unwrap();
+            (text_input.text().to_owned(), text_input.cursor_column())
+        };
         terminal.draw(|frame| {
             let area = frame.area();
             let chunks = Layout::vertical([
@@ -140,19 +163,23 @@ impl Tui {
                 Constraint::Length(1),
             ])
             .split(area);
-            let (lock, _) = &*self.state;
-            let state = lock.lock().unwrap();
-            render_notifications(frame, chunks[0], &state.notifications, *history_has_content);
-            render_input(frame, chunks[2], &state.input_buffer);
+            render_notifications(frame, chunks[0], &notifications, *history_has_content);
+            render_input(frame, chunks[2], &input_text, cursor_column);
         })?;
         if shutdown {
             return Ok(true);
         }
-        if event::poll(Duration::from_millis(50))?
-            && let Event::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-        {
-            return Ok(self.handle_key_pressed(key));
+        if event::poll(Duration::from_millis(50))? {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    if self.handle_key_pressed(key) {
+                        return Ok(true);
+                    }
+                    self.text_input.lock().unwrap().handle_key_event(key);
+                }
+                Event::Paste(text) => self.text_input.lock().unwrap().insert_text(&text),
+                _ => {}
+            }
         }
         Ok(false)
     }
@@ -162,23 +189,14 @@ impl Tui {
             self.stop();
             return true;
         }
-        let (lock, wake) = &*self.state;
-        let mut state = lock.lock().unwrap();
-        match key.code {
-            KeyCode::Enter => {
-                let input = std::mem::take(&mut state.input_buffer);
-                state.input_responses.push_back(input);
-                wake.notify_all();
-            }
-            KeyCode::Char(ch) => state.input_buffer.push(ch),
-            KeyCode::Backspace => {
-                state.input_buffer.pop();
-            }
-            KeyCode::Esc => {
-                state.input_responses.push_back(String::new());
-                wake.notify_all();
-            }
-            _ => {}
+        if key.code == KeyCode::Esc {
+            let (lock, wake) = &*self.state;
+            lock.lock()
+                .unwrap()
+                .input_responses
+                .push_back(String::new());
+            wake.notify_all();
+            return true;
         }
         false
     }
@@ -207,14 +225,10 @@ fn render_notifications(
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
-fn render_input(frame: &mut ratatui::Frame<'_>, area: Rect, input_buffer: &str) {
-    let input =
-        Paragraph::new(input_buffer).style(Style::default().bg(Color::DarkGray).fg(Color::White));
+fn render_input(frame: &mut ratatui::Frame<'_>, area: Rect, text: &str, cursor_column: usize) {
+    let input = Paragraph::new(text).style(Style::default().bg(Color::DarkGray).fg(Color::White));
     frame.render_widget(input, area);
-    frame.set_cursor_position((
-        area.x.saturating_add(input_buffer.chars().count() as u16),
-        area.y,
-    ));
+    frame.set_cursor_position((area.x.saturating_add(cursor_column as u16), area.y));
 }
 
 fn append_message_lines(lines: &mut Vec<Line<'static>>, message: &crate::core::Message) {
