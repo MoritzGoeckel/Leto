@@ -4,6 +4,7 @@ use crate::core::{
 };
 use reqwest::blocking::Client;
 use serde_json::{Value, json};
+use std::time::Duration;
 
 pub fn stream(
     token: &str,
@@ -50,7 +51,10 @@ pub fn stream(
             body[key] = value.clone();
         }
     }
-    let response = Client::new()
+    let timeout = Duration::from_millis(options.timeout_ms.unwrap_or(300_000));
+    let response = Client::builder()
+        .timeout(timeout)
+        .build()?
         .post(format!(
             "{}/responses",
             model.base_url.trim_end_matches('/')

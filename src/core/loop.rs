@@ -1,15 +1,14 @@
 use crate::{
-    config::Config,
     core::{Context, Message, StreamOptions, UserContent, UserMessage, tools::ToolRuntime},
     plugins::PluginManager,
     provider::{AuthError, Provider, openai_chatgpt::OpenAiChatGpt},
-    ui::{self, Ui},
+    ui::Ui,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 pub struct Loop {
-    ui: Arc<Mutex<ui::tui::Tui>>,
+    ui: Arc<Mutex<dyn Ui>>,
     plugins: Arc<Mutex<PluginManager>>,
     provider: OpenAiChatGpt,
     tools: ToolRuntime,
@@ -19,16 +18,18 @@ pub struct Loop {
 }
 
 impl Loop {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let config = Arc::new(Config::load()?);
-        let ui = Arc::new(Mutex::new(ui::tui::Tui));
-        let plugins = Arc::new(Mutex::new(PluginManager::new()));
-        ui::tui::Tui::register_plugin_methods(Arc::clone(&ui), &mut plugins.lock().unwrap());
-        plugins.lock().unwrap().start(&config)?;
+    pub fn new(
+        ui: Arc<Mutex<dyn Ui>>,
+        config: Arc<crate::config::Config>,
+        plugins: Arc<Mutex<PluginManager>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut provider = OpenAiChatGpt::init((*config).clone())?;
         if let Err(error) = provider.auth_refresh() {
             match error {
-                AuthError::NotLoggedIn => provider.auth_login(&mut *ui.lock().unwrap())?,
+                AuthError::NotLoggedIn => {
+                    let mut ui = ui.lock().unwrap();
+                    provider.auth_login(&mut *ui)?;
+                }
                 error => return Err(error.into()),
             }
         }
@@ -80,7 +81,8 @@ impl Loop {
             if let Err(error) = self.provider.auth_refresh() {
                 match error {
                     AuthError::NotLoggedIn => {
-                        self.provider.auth_login(&mut *self.ui.lock().unwrap())?
+                        let mut ui = self.ui.lock().unwrap();
+                        self.provider.auth_login(&mut *ui)?;
                     }
                     error => return Err(error.into()),
                 }
@@ -121,8 +123,9 @@ impl Loop {
                 self.ui.lock().unwrap().add_message(&assistant_message);
                 self.context.messages.push(assistant_message);
                 for result in self.tools.run_tool_calls(message) {
-                    let result = self.plugins.lock().unwrap().transform_tool_result(result)?;
-                    let result = Message::ToolResult(result);
+                    let result = Message::ToolResult(
+                        self.plugins.lock().unwrap().transform_tool_result(result)?,
+                    );
                     self.ui.lock().unwrap().add_message(&result);
                     self.context.messages.push(result);
                 }
@@ -140,9 +143,7 @@ impl Loop {
             ("exit".to_owned(), Self::exit_command as _),
             ("clear".to_owned(), Self::clear_command as _),
         ])
-        // TODO: Let plugins register commands
     }
-
     fn run_command(&mut self, input: &str) -> Result<(), Box<dyn std::error::Error>> {
         let name = input[1..].split_whitespace().next().unwrap_or("");
         match self.commands.get(name) {
@@ -155,18 +156,13 @@ impl Loop {
                 Ok(())
             }
         }
-        // TODO: Notify plugins
     }
-
     fn exit_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.exit = true;
-        // TODO: Notify plugins
         Ok(())
     }
-
     fn clear_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.context.messages.clear();
-        // TODO: Notify plugins
         Ok(())
     }
 }

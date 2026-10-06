@@ -2,13 +2,13 @@ use crate::core::tools::{ExecutableTool, ToolContext};
 use crate::core::{
     AssistantContent, AssistantMessage, TextContent, ToolResultContent, ToolResultMessage, now_ms,
 };
-use crate::{config::Config, plugins::PluginManager, ui::tui::Tui};
+use crate::{config::Config, plugins::PluginManager, ui::Ui};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 pub struct ToolRuntime {
-    pub ui: Arc<Mutex<Tui>>,
+    pub ui: Arc<Mutex<dyn Ui>>,
     pub config: Arc<Config>,
     pub plugins: Arc<Mutex<PluginManager>>,
     pub tools: HashMap<String, ExecutableTool>,
@@ -16,7 +16,7 @@ pub struct ToolRuntime {
 
 impl ToolRuntime {
     pub fn new(
-        ui: Arc<Mutex<Tui>>,
+        ui: Arc<Mutex<dyn Ui>>,
         config: Arc<Config>,
         plugins: Arc<Mutex<PluginManager>>,
     ) -> Self {
@@ -31,7 +31,6 @@ impl ToolRuntime {
     pub fn add_tool(&mut self, tool: ExecutableTool) {
         self.tools.insert(tool.definition.name.clone(), tool);
     }
-
     pub fn add_tools(&mut self, tools: Vec<ExecutableTool>) {
         for tool in tools {
             self.add_tool(tool);
@@ -45,7 +44,6 @@ impl ToolRuntime {
             .filter_map(|content| match content {
                 AssistantContent::ToolCall(call) => {
                     let call_hook_result = self.plugins.lock().unwrap().notify_tool_call(&call);
-                    let arguments = call.arguments.clone();
                     let result = match call_hook_result {
                         Err(error) => Err(format!("Tool call hook failed: {error}")),
                         Ok(()) => {
@@ -57,7 +55,7 @@ impl ToolRuntime {
                                     config: &self.config,
                                     plugins: &mut plugins,
                                 };
-                                (tool.handler)(&mut context, Value::Object(arguments))
+                                (tool.handler)(&mut context, Value::Object(call.arguments.clone()))
                             } else {
                                 Err(format!("Unknown tool: {}", call.name))
                             }
