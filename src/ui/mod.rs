@@ -8,4 +8,5 @@ pub trait Ui: Send {
     fn wait_for_next_prompt(&mut self) -> io::Result<String>;
     fn inform(&mut self, title: &str, message: &str);
     fn on_message(&mut self, message: &Message);
+    fn on_command(&mut self, command: &str);
 }

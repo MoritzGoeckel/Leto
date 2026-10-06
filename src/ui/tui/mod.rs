@@ -30,7 +30,7 @@ pub struct Tui {
 
 #[derive(Default)]
 struct State {
-    pending_messages: Vec<crate::core::Message>,
+    pending_lines: Vec<Line<'static>>,
     input_responses: VecDeque<String>,
     input_buffer: String,
     notifications: Vec<(String, String)>,
@@ -56,7 +56,7 @@ impl Tui {
         let mut terminal = Terminal::with_options(
             backend,
             TerminalOptions {
-                viewport: Viewport::Inline(6),
+                viewport: Viewport::Inline(4),
             },
         )?;
         let result = self.run_terminal(&mut terminal);
@@ -74,34 +74,47 @@ impl Tui {
         terminal.insert_before(1, |buffer| {
             Paragraph::new("").render(buffer.area, buffer);
         })?;
+        let mut viewport_height = 4;
         loop {
-            if self
-                .state
-                .0
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .shutdown
-            {
-                return Ok(());
-            }
-            let pending_messages = {
+            let (pending_lines, shutdown, notification_count) = {
                 let mut state = self.state.0.lock().unwrap_or_else(|e| e.into_inner());
-                std::mem::take(&mut state.pending_messages)
+                (
+                    std::mem::take(&mut state.pending_lines),
+                    state.shutdown,
+                    state.notifications.len(),
+                )
             };
-            for message in pending_messages {
-                let mut lines = Vec::new();
-                append_message_lines(&mut lines, &message);
-                if !lines.is_empty() {
-                    let width = terminal.size()?.width as usize;
-                    let height = lines
-                        .iter()
-                        .map(|line| line.width().max(1).div_ceil(width))
-                        .sum::<usize>() as u16;
-                    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
-                    terminal.insert_before(height, move |buffer| {
-                        paragraph.render(buffer.area, buffer);
-                    })?;
-                }
+            let next_height = notification_count as u16 + 4;
+            if next_height > viewport_height {
+                let added_rows = next_height - viewport_height;
+                let screen_height = terminal.size()?.height;
+                let last_row = screen_height - 1;
+                let viewport_top = screen_height - next_height;
+                execute!(
+                    terminal.backend_mut(),
+                    MoveTo(0, last_row),
+                    Print("\r\n".repeat(added_rows as usize)),
+                    MoveTo(0, viewport_top),
+                )?;
+                *terminal = Terminal::with_options(
+                    CrosstermBackend::new(io::stdout()),
+                    TerminalOptions {
+                        viewport: Viewport::Inline(next_height),
+                    },
+                )?;
+                terminal.clear()?;
+                viewport_height = next_height;
+            }
+            if !pending_lines.is_empty() {
+                let width = terminal.size()?.width as usize;
+                let height = pending_lines
+                    .iter()
+                    .map(|line| line.width().max(1).div_ceil(width))
+                    .sum::<usize>() as u16;
+                let paragraph = Paragraph::new(pending_lines).wrap(Wrap { trim: false });
+                terminal.insert_before(height, move |buffer| {
+                    paragraph.render(buffer.area, buffer);
+                })?;
             }
             terminal.draw(|frame| {
                 let area = frame.area();
@@ -138,6 +151,9 @@ impl Tui {
                     chunks[2].y,
                 ));
             })?;
+            if shutdown {
+                return Ok(());
+            }
 
             if event::poll(Duration::from_millis(50))? {
                 if let Event::Key(key) = event::read()? {
@@ -256,11 +272,22 @@ impl Ui for Tui {
     }
 
     fn on_message(&mut self, message: &crate::core::Message) {
+        let mut lines = Vec::new();
+        append_message_lines(&mut lines, message);
         self.state
             .0
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .pending_messages
-            .push(message.clone());
+            .pending_lines
+            .extend(lines);
+    }
+
+    fn on_command(&mut self, command: &str) {
+        self.state
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pending_lines
+            .push(Line::from(format!("you> {command}")));
     }
 }

@@ -73,6 +73,7 @@ impl Loop {
         while !self.exit {
             let input = self.ui.lock().unwrap().wait_for_next_prompt()?;
             if input.starts_with('/') {
+                self.ui.lock().unwrap().on_command(&input);
                 self.run_command(&input)?;
                 continue;
             }
