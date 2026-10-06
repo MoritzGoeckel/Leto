@@ -56,7 +56,7 @@ impl Tui {
         let mut terminal = Terminal::with_options(
             backend,
             TerminalOptions {
-                viewport: Viewport::Inline(4),
+                viewport: Viewport::Inline(3),
             },
         )?;
         let result = self.run_terminal(&mut terminal);
@@ -74,7 +74,8 @@ impl Tui {
         terminal.insert_before(1, |buffer| {
             Paragraph::new("").render(buffer.area, buffer);
         })?;
-        let mut viewport_height = 4;
+        let mut viewport_height = 3;
+        let mut history_has_content = false;
         loop {
             let (pending_lines, shutdown, notification_count) = {
                 let mut state = self.state.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -84,7 +85,10 @@ impl Tui {
                     state.notifications.len(),
                 )
             };
-            let next_height = notification_count as u16 + 4;
+            history_has_content |= !pending_lines.is_empty();
+            let next_height = notification_count as u16
+                + 3
+                + u16::from(history_has_content && notification_count > 0);
             if next_height > viewport_height {
                 let added_rows = next_height - viewport_height;
                 let screen_height = terminal.size()?.height;
@@ -138,7 +142,9 @@ impl Tui {
                             .add_modifier(Modifier::BOLD),
                     )));
                 }
-                lines.insert(0, Line::default());
+                if history_has_content && !lines.is_empty() {
+                    lines.insert(0, Line::default());
+                }
                 let content = Paragraph::new(lines).wrap(Wrap { trim: false });
                 frame.render_widget(content, chunks[0]);
                 let input = Paragraph::new(state.input_buffer.as_str())
