@@ -140,6 +140,7 @@ impl Loop {
             ("exit".to_owned(), Self::exit_command as _),
             ("clear".to_owned(), Self::clear_command as _),
         ])
+        // TODO: Let plugins register commands
     }
 
     fn run_command(&mut self, input: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -154,15 +155,18 @@ impl Loop {
                 Ok(())
             }
         }
+        // TODO: Notify plugins
     }
 
     fn exit_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.exit = true;
+        // TODO: Notify plugins
         Ok(())
     }
 
     fn clear_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.context.messages.clear();
+        // TODO: Notify plugins
         Ok(())
     }
 }

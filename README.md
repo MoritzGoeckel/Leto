@@ -10,5 +10,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 - TUI
 - Get rid of the TUI lock while typing
 - Model provider via extensions
+- Gemini
 - Configure model
-- Commands & Clear
+- SSE parsing
