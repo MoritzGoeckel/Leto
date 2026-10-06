@@ -7,7 +7,7 @@ use std::{
 
 use crossterm::{
     cursor::MoveTo,
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     execute,
     style::Print,
     terminal::{disable_raw_mode, enable_raw_mode},
@@ -15,7 +15,7 @@ use crossterm::{
 use ratatui::{
     Terminal, TerminalOptions, Viewport,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget, Wrap},
@@ -46,7 +46,7 @@ impl Tui {
 
     pub fn stop(&self) {
         let (lock, wake) = &*self.state;
-        lock.lock().unwrap_or_else(|e| e.into_inner()).shutdown = true;
+        lock.lock().unwrap().shutdown = true;
         wake.notify_all();
     }
 
@@ -59,7 +59,22 @@ impl Tui {
                 viewport: Viewport::Inline(3),
             },
         )?;
-        let result = self.run_terminal(&mut terminal);
+        terminal.insert_before(1, |buffer| {
+            Paragraph::new("").render(buffer.area, buffer);
+        })?;
+        let mut viewport_height = 3;
+        let mut history_has_content = false;
+        let result = loop {
+            match self.tick(
+                &mut terminal,
+                &mut viewport_height,
+                &mut history_has_content,
+            ) {
+                Ok(true) => break Ok(()),
+                Ok(false) => {}
+                Err(error) => break Err(error),
+            }
+        };
         disable_raw_mode()?;
         let last_row = terminal.size()?.height - 1;
         execute!(terminal.backend_mut(), MoveTo(0, last_row), Print("\r\n"))?;
@@ -67,133 +82,139 @@ impl Tui {
         result
     }
 
-    fn run_terminal(
+    fn tick(
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    ) -> io::Result<()> {
-        terminal.insert_before(1, |buffer| {
-            Paragraph::new("").render(buffer.area, buffer);
-        })?;
-        let mut viewport_height = 3;
-        let mut history_has_content = false;
-        loop {
-            let (pending_lines, shutdown, notification_count) = {
-                let mut state = self.state.0.lock().unwrap_or_else(|e| e.into_inner());
-                (
-                    std::mem::take(&mut state.pending_lines),
-                    state.shutdown,
-                    state.notifications.len(),
-                )
-            };
-            history_has_content |= !pending_lines.is_empty();
-            let next_height = notification_count as u16
-                + 3
-                + u16::from(history_has_content && notification_count > 0);
-            if next_height > viewport_height {
-                let added_rows = next_height - viewport_height;
-                let screen_height = terminal.size()?.height;
-                let last_row = screen_height - 1;
-                let viewport_top = screen_height - next_height;
-                execute!(
-                    terminal.backend_mut(),
-                    MoveTo(0, last_row),
-                    Print("\r\n".repeat(added_rows as usize)),
-                    MoveTo(0, viewport_top),
-                )?;
-                *terminal = Terminal::with_options(
-                    CrosstermBackend::new(io::stdout()),
-                    TerminalOptions {
-                        viewport: Viewport::Inline(next_height),
-                    },
-                )?;
-                terminal.clear()?;
-                viewport_height = next_height;
-            }
-            if !pending_lines.is_empty() {
-                let width = terminal.size()?.width as usize;
-                let height = pending_lines
-                    .iter()
-                    .map(|line| line.width().max(1).div_ceil(width))
-                    .sum::<usize>() as u16;
-                let paragraph = Paragraph::new(pending_lines).wrap(Wrap { trim: false });
-                terminal.insert_before(height, move |buffer| {
-                    paragraph.render(buffer.area, buffer);
-                })?;
-            }
-            terminal.draw(|frame| {
-                let area = frame.area();
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Min(0),
-                        Constraint::Length(1),
-                        Constraint::Length(1),
-                        Constraint::Length(1),
-                    ])
-                    .split(area);
-                let (lock, _) = &*self.state;
-                let state = lock.lock().unwrap_or_else(|e| e.into_inner());
-                let mut lines = Vec::new();
-                for (title, notice) in &state.notifications {
-                    lines.push(Line::from(Span::styled(
-                        format!("{title}: {notice}"),
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    )));
-                }
-                if history_has_content && !lines.is_empty() {
-                    lines.insert(0, Line::default());
-                }
-                let content = Paragraph::new(lines).wrap(Wrap { trim: false });
-                frame.render_widget(content, chunks[0]);
-                let input = Paragraph::new(state.input_buffer.as_str())
-                    .style(Style::default().bg(Color::DarkGray).fg(Color::White));
-                frame.render_widget(input, chunks[2]);
-                frame.set_cursor_position((
-                    chunks[2]
-                        .x
-                        .saturating_add(state.input_buffer.chars().count() as u16),
-                    chunks[2].y,
-                ));
-            })?;
-            if shutdown {
-                return Ok(());
-            }
-
-            if event::poll(Duration::from_millis(50))? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
-                    }
-                    if key.code == KeyCode::Char('c')
-                        && key.modifiers.contains(event::KeyModifiers::CONTROL)
-                    {
-                        self.stop();
-                        return Ok(());
-                    }
-                    let (lock, wake) = &*self.state;
-                    let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
-                    match key.code {
-                        KeyCode::Enter => {
-                            let input = std::mem::take(&mut state.input_buffer);
-                            state.input_responses.push_back(input);
-                            wake.notify_all();
-                        }
-                        KeyCode::Char(ch) => state.input_buffer.push(ch),
-                        KeyCode::Backspace => {
-                            state.input_buffer.pop();
-                        }
-                        KeyCode::Esc => {
-                            state.input_responses.push_back(String::new());
-                            wake.notify_all();
-                        }
-                        _ => {}
-                    }
-                }
-            }
+        viewport_height: &mut u16,
+        history_has_content: &mut bool,
+    ) -> io::Result<bool> {
+        let (pending_lines, shutdown, notification_count) = {
+            let mut state = self.state.0.lock().unwrap();
+            (
+                std::mem::take(&mut state.pending_lines),
+                state.shutdown,
+                state.notifications.len(),
+            )
+        };
+        *history_has_content |= !pending_lines.is_empty();
+        let next_height = notification_count as u16
+            + 3
+            + u16::from(*history_has_content && notification_count > 0);
+        if next_height > *viewport_height {
+            let added_rows = next_height - *viewport_height;
+            let screen_height = terminal.size()?.height;
+            let last_row = screen_height - 1;
+            let viewport_top = screen_height - next_height;
+            execute!(
+                terminal.backend_mut(),
+                MoveTo(0, last_row),
+                Print("\r\n".repeat(added_rows as usize)),
+                MoveTo(0, viewport_top),
+            )?;
+            *terminal = Terminal::with_options(
+                CrosstermBackend::new(io::stdout()),
+                TerminalOptions {
+                    viewport: Viewport::Inline(next_height),
+                },
+            )?;
+            terminal.clear()?;
+            *viewport_height = next_height;
         }
+        if !pending_lines.is_empty() {
+            let width = terminal.size()?.width as usize;
+            let height = pending_lines
+                .iter()
+                .map(|line| line.width().max(1).div_ceil(width))
+                .sum::<usize>() as u16;
+            let paragraph = Paragraph::new(pending_lines).wrap(Wrap { trim: false });
+            terminal.insert_before(height, move |buffer| {
+                paragraph.render(buffer.area, buffer);
+            })?;
+        }
+        terminal.draw(|frame| {
+            let area = frame.area();
+            let chunks = Layout::vertical([
+                Constraint::Min(0),
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ])
+            .split(area);
+            let (lock, _) = &*self.state;
+            let state = lock.lock().unwrap();
+            render_notifications(frame, chunks[0], &state.notifications, *history_has_content);
+            render_input(frame, chunks[2], &state.input_buffer);
+        })?;
+        if shutdown {
+            return Ok(true);
+        }
+        if event::poll(Duration::from_millis(50))?
+            && let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+        {
+            return Ok(self.handle_key_pressed(key));
+        }
+        Ok(false)
     }
+
+    fn handle_key_pressed(&mut self, key: KeyEvent) -> bool {
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(event::KeyModifiers::CONTROL) {
+            self.stop();
+            return true;
+        }
+        let (lock, wake) = &*self.state;
+        let mut state = lock.lock().unwrap();
+        match key.code {
+            KeyCode::Enter => {
+                let input = std::mem::take(&mut state.input_buffer);
+                state.input_responses.push_back(input);
+                wake.notify_all();
+            }
+            KeyCode::Char(ch) => state.input_buffer.push(ch),
+            KeyCode::Backspace => {
+                state.input_buffer.pop();
+            }
+            KeyCode::Esc => {
+                state.input_responses.push_back(String::new());
+                wake.notify_all();
+            }
+            _ => {}
+        }
+        false
+    }
+}
+
+fn render_notifications(
+    frame: &mut ratatui::Frame<'_>,
+    area: Rect,
+    notifications: &[(String, String)],
+    history_has_content: bool,
+) {
+    let mut lines: Vec<_> = notifications
+        .iter()
+        .map(|(title, notice)| {
+            Line::from(Span::styled(
+                format!("{title}: {notice}"),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ))
+        })
+        .collect();
+    if history_has_content && !lines.is_empty() {
+        lines.insert(0, Line::default());
+    }
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+}
+
+fn render_input(frame: &mut ratatui::Frame<'_>, area: Rect, input_buffer: &str) {
+    let input =
+        Paragraph::new(input_buffer).style(Style::default().bg(Color::DarkGray).fg(Color::White));
+    frame.render_widget(input, area);
+    frame.set_cursor_position((
+        area.x.saturating_add(input_buffer.chars().count() as u16),
+        area.y,
+    ));
 }
 
 fn append_message_lines(lines: &mut Vec<Line<'static>>, message: &crate::core::Message) {
@@ -259,9 +280,9 @@ fn append_message_lines(lines: &mut Vec<Line<'static>>, message: &crate::core::M
 impl Ui for Tui {
     fn wait_for_next_prompt(&mut self) -> io::Result<String> {
         let (lock, wake) = &*self.state;
-        let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = lock.lock().unwrap();
         while state.input_responses.is_empty() && !state.shutdown {
-            state = wake.wait(state).unwrap_or_else(|e| e.into_inner());
+            state = wake.wait(state).unwrap();
         }
         Ok(if state.shutdown {
             "/exit".to_owned()
@@ -271,7 +292,7 @@ impl Ui for Tui {
     }
 
     fn inform(&mut self, title: &str, message: &str) {
-        let mut state = self.state.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.state.0.lock().unwrap();
         state
             .notifications
             .push((title.to_owned(), message.to_owned()));
@@ -280,19 +301,14 @@ impl Ui for Tui {
     fn on_message(&mut self, message: &crate::core::Message) {
         let mut lines = Vec::new();
         append_message_lines(&mut lines, message);
-        self.state
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .pending_lines
-            .extend(lines);
+        self.state.0.lock().unwrap().pending_lines.extend(lines);
     }
 
     fn on_command(&mut self, command: &str) {
         self.state
             .0
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap()
             .pending_lines
             .push(Line::from(format!("you> {command}")));
     }
