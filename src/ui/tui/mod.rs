@@ -312,6 +312,15 @@ impl Ui for Tui {
             .push((title.to_owned(), message.to_owned()));
     }
 
+    fn note(&mut self, note: &str) {
+        self.state
+            .0
+            .lock()
+            .unwrap()
+            .pending_lines
+            .push(Line::from(note.to_owned()));
+    }
+
     fn on_message(&mut self, message: &crate::core::Message) {
         let mut lines = Vec::new();
         append_message_lines(&mut lines, message);

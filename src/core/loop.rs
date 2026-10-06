@@ -5,6 +5,7 @@ use crate::{
     ui::Ui,
 };
 use std::collections::HashMap;
+use std::fs;
 use std::sync::{Arc, Mutex};
 
 pub struct Loop {
@@ -35,7 +36,14 @@ impl Loop {
         }
         let mut tools = ToolRuntime::new(Arc::clone(&ui), config, Arc::clone(&plugins));
         tools.add_tools(crate::core::tools::buildin::make_default_tools());
+        let agents_context = Self::load_agents_context();
+        if let Some((path, _)) = &agents_context {
+            ui.lock()
+                .unwrap()
+                .note(&format!("Loaded {}", path.display()));
+        }
         let context = Context {
+            system_prompt: agents_context.map(|(_, content)| content),
             tools: Some(
                 tools
                     .tools
@@ -143,6 +151,20 @@ impl Loop {
             ("clear".to_owned(), Self::clear_command as _),
         ])
     }
+
+    fn load_agents_context() -> Option<(std::path::PathBuf, String)> {
+        let mut directory = std::env::current_dir().ok()?;
+        loop {
+            let path = directory.join("AGENTS.md");
+            if let Ok(content) = fs::read_to_string(&path) {
+                return Some((path, content));
+            }
+            if !directory.pop() {
+                return None;
+            }
+        }
+    }
+
     fn run_command(&mut self, input: &str) -> Result<(), Box<dyn std::error::Error>> {
         let name = input[1..].split_whitespace().next().unwrap_or("");
         match self.commands.get(name) {
