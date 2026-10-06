@@ -66,14 +66,12 @@ impl Loop {
             .next()
             .expect("provider has no models");
         self.plugins.lock().unwrap().notify_new_conversation()?;
-        let notice_id = self
-            .ui
+        self.ui
             .lock()
             .unwrap()
-            .inform_blocking("Signed in. Enter a message, or /exit to quit.");
-        self.ui.lock().unwrap().close(notice_id);
+            .inform("Signed in", "Enter a message, or /exit to quit.");
         while !self.exit {
-            let input = self.ui.lock().unwrap().get_input("you> ")?;
+            let input = self.ui.lock().unwrap().wait_for_next_prompt()?;
             if input.starts_with('/') {
                 self.run_command(&input)?;
                 continue;
@@ -97,7 +95,7 @@ impl Loop {
                     .unwrap()
                     .transform_user_message(user_message)?,
             );
-            self.ui.lock().unwrap().add_message(&user_message);
+            self.ui.lock().unwrap().on_message(&user_message);
             self.context.messages.push(user_message);
             loop {
                 let events =
@@ -120,13 +118,13 @@ impl Loop {
                     .iter()
                     .any(|content| matches!(content, crate::core::AssistantContent::ToolCall(_)));
                 let assistant_message = Message::Assistant(message.clone());
-                self.ui.lock().unwrap().add_message(&assistant_message);
+                self.ui.lock().unwrap().on_message(&assistant_message);
                 self.context.messages.push(assistant_message);
                 for result in self.tools.run_tool_calls(message) {
                     let result = Message::ToolResult(
                         self.plugins.lock().unwrap().transform_tool_result(result)?,
                     );
-                    self.ui.lock().unwrap().add_message(&result);
+                    self.ui.lock().unwrap().on_message(&result);
                     self.context.messages.push(result);
                 }
                 if !has_tool_calls {
@@ -152,7 +150,7 @@ impl Loop {
                 self.ui
                     .lock()
                     .unwrap()
-                    .inform_blocking(&format!("Unknown command: /{name}"));
+                    .inform("Unknown command", &format!("/{name}"));
                 Ok(())
             }
         }

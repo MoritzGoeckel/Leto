@@ -13,3 +13,5 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 - Gemini
 - Configure model
 - SSE parsing
+- Accept unkown /commands as input
+- Retry on llm provider error

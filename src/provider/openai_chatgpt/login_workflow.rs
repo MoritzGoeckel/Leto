@@ -15,8 +15,7 @@ pub fn login_and_save(
     ui: &mut dyn Ui,
 ) -> Result<Credential, Box<dyn std::error::Error>> {
     let login = begin_login("00000000-0000-4000-8000-000000000001");
-    let use_listener =
-        ui.get_input("Use SSH port forwarding to receive the callback? [y/N] ")? == "y";
+    let use_listener = ui.wait_for_next_prompt()? == "y";
     let callback_receiver = if use_listener {
         Some(start_callback_listener()?)
     } else {
@@ -33,15 +32,12 @@ pub fn login_and_save(
             login.authorization_url
         )
     };
-    let blocking_id = ui.inform_blocking(&message);
+    ui.inform("Sign in", &message);
     let callback_url = if let Some(receiver) = callback_receiver {
         receiver.recv()?
     } else {
-        ui.get_input(
-            "After approving, paste the full callback URL from your browser address bar: ",
-        )?
+        ui.wait_for_next_prompt()?
     };
-    ui.close(blocking_id);
     let credential = exchange_callback(&login, &callback_url)?;
     config.set_provider("openai", serde_json::to_value(&credential)?);
     config.save()?;
