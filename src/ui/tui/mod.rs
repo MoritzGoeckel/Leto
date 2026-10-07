@@ -268,6 +268,14 @@ fn render_notifications(
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
+fn user_message_line(text: &str) -> Line<'static> {
+    Line::styled(
+        text.to_owned(),
+        Style::default().fg(Color::White).bg(INPUT_BACKGROUND),
+    )
+    .style(Style::default().fg(Color::White).bg(INPUT_BACKGROUND))
+}
+
 fn append_message_lines(lines: &mut Vec<Line<'static>>, message: &crate::core::Message) {
     use crate::core::{AssistantContent, Message, SystemContent, UserContent, UserContentBlock};
     match message {
@@ -280,15 +288,13 @@ fn append_message_lines(lines: &mut Vec<Line<'static>>, message: &crate::core::M
             }
         },
         Message::User(message) => match &message.content {
-            UserContent::Text(text) => lines.push(Line::from(format!("you> {text}"))),
+            UserContent::Text(text) => lines.push(user_message_line(text)),
             UserContent::Blocks(blocks) => {
                 for block in blocks {
                     match block {
-                        UserContentBlock::Text(text) => {
-                            lines.push(Line::from(format!("you> {}", text.text)))
-                        }
+                        UserContentBlock::Text(text) => lines.push(user_message_line(&text.text)),
                         UserContentBlock::Image(image) => {
-                            lines.push(Line::from(format!("you> [image: {}]", image.mime_type)))
+                            lines.push(user_message_line(&format!("[image: {}]", image.mime_type)))
                         }
                     }
                 }
@@ -365,6 +371,9 @@ impl Ui for Tui {
             .lock()
             .unwrap()
             .pending_lines
-            .push(Line::from(format!("you> {command}")));
+            .push(Line::styled(
+                command.to_owned(),
+                Style::default().fg(Color::Cyan),
+            ));
     }
 }
