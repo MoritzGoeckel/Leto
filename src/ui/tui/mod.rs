@@ -25,7 +25,7 @@ use ratatui::{
 
 use super::Ui;
 mod text_input;
-use text_input::TextInput;
+use text_input::{INPUT_BACKGROUND, INPUT_PADDING, TextInput, render_input};
 
 #[derive(Clone)]
 pub struct Tui {
@@ -72,7 +72,7 @@ impl Tui {
         let mut terminal = Terminal::with_options(
             backend,
             TerminalOptions {
-                viewport: Viewport::Inline(3),
+                viewport: Viewport::Inline(5),
             },
         )?;
         execute!(terminal.backend_mut(), EnableBracketedPaste)?;
@@ -110,17 +110,18 @@ impl Tui {
         };
         *history_has_content |= !pending_lines.is_empty();
         let size = terminal.size()?;
-        let (input_lines, cursor_column, cursor_row) = {
-            let text_input = self.text_input.lock().unwrap();
-            wrap_input(text_input.text(), text_input.cursor(), size.width as usize)
-        };
+        let (input_lines, cursor_column, cursor_row) = self
+            .text_input
+            .lock()
+            .unwrap()
+            .wrapped_lines((size.width - 2 * INPUT_PADDING) as usize);
         let input_height = input_lines
             .len()
-            .min(size.height.saturating_sub(2) as usize) as u16;
+            .min(size.height.saturating_sub(4) as usize) as u16;
         let notification_height =
             notifications.len() + usize::from(*history_has_content && !notifications.is_empty());
         let viewport_height =
-            (notification_height + input_height as usize + 2).min(size.height as usize) as u16;
+            (notification_height + input_height as usize + 4).min(size.height as usize) as u16;
         resize_viewport(terminal, viewport_height)?;
         if !pending_lines.is_empty() {
             let height = pending_lines
@@ -137,12 +138,20 @@ impl Tui {
             let chunks = Layout::vertical([
                 Constraint::Min(0),
                 Constraint::Length(1),
+                Constraint::Length(1),
                 Constraint::Length(input_height),
+                Constraint::Length(1),
                 Constraint::Length(1),
             ])
             .split(area);
             render_notifications(frame, chunks[0], &notifications, *history_has_content);
-            render_input(frame, chunks[2], input_lines, cursor_column, cursor_row);
+            for separator in [chunks[2], chunks[4]] {
+                frame.render_widget(
+                    Paragraph::new("").style(Style::default().bg(INPUT_BACKGROUND)),
+                    separator,
+                );
+            }
+            render_input(frame, chunks[3], input_lines, cursor_column, cursor_row);
         })?;
         if shutdown {
             return Ok(true);
@@ -210,24 +219,6 @@ fn resize_viewport(
     terminal.clear()
 }
 
-fn render_input(
-    frame: &mut ratatui::Frame<'_>,
-    area: Rect,
-    lines: Vec<Line<'static>>,
-    cursor_column: usize,
-    cursor_row: usize,
-) {
-    let scroll = (cursor_row + 1).saturating_sub(area.height as usize);
-    let input = Paragraph::new(lines)
-        .scroll((scroll as u16, 0))
-        .style(Style::default().bg(Color::DarkGray).fg(Color::White));
-    frame.render_widget(input, area);
-    frame.set_cursor_position((
-        area.x + cursor_column as u16,
-        area.y + (cursor_row - scroll) as u16,
-    ));
-}
-
 fn render_notifications(
     frame: &mut ratatui::Frame<'_>,
     area: Rect,
@@ -249,49 +240,6 @@ fn render_notifications(
         lines.insert(0, Line::default());
     }
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
-}
-
-fn wrap_input(text: &str, cursor: usize, width: usize) -> (Vec<Line<'static>>, usize, usize) {
-    let mut lines = vec![String::new()];
-    let mut column = 0;
-    let mut offset = 0;
-    let mut cursor_position = (0, 0);
-    for logical_line in text.split('\n') {
-        let span = Span::raw(logical_line);
-        for grapheme in span.styled_graphemes(Style::default()) {
-            let symbol_width = Span::raw(grapheme.symbol).width();
-            if column + symbol_width > width {
-                lines.push(String::new());
-                column = 0;
-            }
-            if offset == cursor {
-                cursor_position = (column, lines.len() - 1);
-            }
-            lines.last_mut().unwrap().push_str(grapheme.symbol);
-            column += symbol_width;
-            offset += grapheme.symbol.len();
-        }
-        if offset == cursor {
-            cursor_position = if column == width {
-                (0, lines.len())
-            } else {
-                (column, lines.len() - 1)
-            };
-            if column == width && offset == text.len() {
-                lines.push(String::new());
-            }
-        }
-        if offset < text.len() {
-            lines.push(String::new());
-            column = 0;
-            offset += 1;
-        }
-    }
-    (
-        lines.into_iter().map(Line::from).collect(),
-        cursor_position.0,
-        cursor_position.1,
-    )
 }
 
 fn append_message_lines(lines: &mut Vec<Line<'static>>, message: &crate::core::Message) {
