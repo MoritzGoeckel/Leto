@@ -38,6 +38,7 @@ struct State {
     pending_lines: Vec<Line<'static>>,
     input_responses: VecDeque<String>,
     notifications: Vec<(String, String)>,
+    working: bool,
     shutdown: bool,
 }
 
@@ -100,12 +101,13 @@ impl Tui {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         history_has_content: &mut bool,
     ) -> io::Result<bool> {
-        let (pending_lines, shutdown, notifications) = {
+        let (pending_lines, shutdown, notifications, working) = {
             let mut state = self.state.0.lock().unwrap();
             (
                 std::mem::take(&mut state.pending_lines),
                 state.shutdown,
                 state.notifications.clone(),
+                state.working,
             )
         };
         *history_has_content |= !pending_lines.is_empty();
@@ -120,15 +122,19 @@ impl Tui {
             .min(size.height.saturating_sub(4) as usize) as u16;
         let notification_height =
             notifications.len() + usize::from(*history_has_content && !notifications.is_empty());
-        let viewport_height =
-            (notification_height + input_height as usize + 4).min(size.height as usize) as u16;
+        let working_separator_height =
+            u16::from(working && (*history_has_content || !notifications.is_empty()));
+        let working_height = u16::from(working);
+        let viewport_height = (notification_height
+            + input_height as usize
+            + 4
+            + working_separator_height as usize
+            + working_height as usize)
+            .min(size.height as usize) as u16;
         resize_viewport(terminal, viewport_height)?;
         if !pending_lines.is_empty() {
-            let height = pending_lines
-                .iter()
-                .map(|line| line.width().max(1).div_ceil(size.width as usize))
-                .sum::<usize>() as u16;
             let paragraph = Paragraph::new(pending_lines).wrap(Wrap { trim: false });
+            let height = paragraph.line_count(size.width) as u16;
             terminal.insert_before(height, move |buffer| {
                 paragraph.render(buffer.area, buffer);
             })?;
@@ -137,6 +143,8 @@ impl Tui {
             let area = frame.area();
             let chunks = Layout::vertical([
                 Constraint::Min(0),
+                Constraint::Length(working_separator_height),
+                Constraint::Length(working_height),
                 Constraint::Length(1),
                 Constraint::Length(1),
                 Constraint::Length(input_height),
@@ -145,13 +153,16 @@ impl Tui {
             ])
             .split(area);
             render_notifications(frame, chunks[0], &notifications, *history_has_content);
-            for separator in [chunks[2], chunks[4]] {
+            if working {
+                frame.render_widget(Paragraph::new("Working..."), chunks[2]);
+            }
+            for separator in [chunks[4], chunks[6]] {
                 frame.render_widget(
                     Paragraph::new("").style(Style::default().bg(INPUT_BACKGROUND)),
                     separator,
                 );
             }
-            render_input(frame, chunks[3], input_lines, cursor_column, cursor_row);
+            render_input(frame, chunks[5], input_lines, cursor_column, cursor_row);
         })?;
         if shutdown {
             return Ok(true);
@@ -197,18 +208,19 @@ fn resize_viewport(
     if height == area.height {
         return Ok(());
     }
+    terminal.clear()?;
     let viewport_top = if height > area.height {
         let size = terminal.size()?;
+        let scroll_height = (area.y + height).saturating_sub(size.height);
         execute!(
             terminal.backend_mut(),
             MoveTo(0, size.height - 1),
-            Print("\r\n".repeat((height - area.height) as usize)),
+            Print("\r\n".repeat(scroll_height as usize)),
         )?;
-        size.height - height
+        area.y - scroll_height
     } else {
         area.y
     };
-    terminal.clear()?;
     execute!(terminal.backend_mut(), MoveTo(0, viewport_top))?;
     *terminal = Terminal::with_options(
         CrosstermBackend::new(io::stdout()),
@@ -318,6 +330,14 @@ impl Ui for Tui {
 
     fn clear_notifications(&mut self) {
         self.state.0.lock().unwrap().notifications.clear();
+    }
+
+    fn start_working(&mut self) {
+        self.state.0.lock().unwrap().working = true;
+    }
+
+    fn stop_working(&mut self) {
+        self.state.0.lock().unwrap().working = false;
     }
 
     fn inform(&mut self, title: &str, message: &str) {

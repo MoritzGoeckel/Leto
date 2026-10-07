@@ -107,6 +107,7 @@ impl Loop {
             );
             self.ui.lock().unwrap().on_message(&user_message);
             self.context.messages.push(user_message);
+            self.ui.lock().unwrap().start_working();
             loop {
                 let events =
                     self.provider
@@ -138,6 +139,7 @@ impl Loop {
                     self.context.messages.push(result);
                 }
                 if !has_tool_calls {
+                    self.ui.lock().unwrap().stop_working();
                     break;
                 }
             }
