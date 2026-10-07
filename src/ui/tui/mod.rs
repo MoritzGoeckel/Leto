@@ -115,20 +115,33 @@ impl Tui {
             )
         };
         *history_has_content |= !pending_lines.is_empty();
-        let next_height = notification_count as u16
-            + 3
-            + u16::from(*history_has_content && notification_count > 0);
-        if next_height > *viewport_height {
-            let added_rows = next_height - *viewport_height;
-            let screen_height = terminal.size()?.height;
-            let last_row = screen_height - 1;
-            let viewport_top = screen_height - next_height;
-            execute!(
-                terminal.backend_mut(),
-                MoveTo(0, last_row),
-                Print("\r\n".repeat(added_rows as usize)),
-                MoveTo(0, viewport_top),
-            )?;
+        let size = terminal.size()?;
+        let (input_lines, cursor_column, cursor_row) = {
+            let text_input = self.text_input.lock().unwrap();
+            wrap_input(text_input.text(), text_input.cursor(), size.width as usize)
+        };
+        let input_height = input_lines
+            .len()
+            .min(size.height.saturating_sub(2) as usize) as u16;
+        let next_height = (notification_count as usize
+            + 2
+            + usize::from(*history_has_content && notification_count > 0)
+            + input_height as usize)
+            .min(size.height as usize) as u16;
+        if next_height != *viewport_height {
+            let viewport_top = if next_height > *viewport_height {
+                let added_rows = next_height - *viewport_height;
+                execute!(
+                    terminal.backend_mut(),
+                    MoveTo(0, size.height - 1),
+                    Print("\r\n".repeat(added_rows as usize)),
+                )?;
+                size.height - next_height
+            } else {
+                terminal.get_frame().area().y
+            };
+            terminal.clear()?;
+            execute!(terminal.backend_mut(), MoveTo(0, viewport_top))?;
             *terminal = Terminal::with_options(
                 CrosstermBackend::new(io::stdout()),
                 TerminalOptions {
@@ -150,21 +163,25 @@ impl Tui {
             })?;
         }
         let notifications = self.state.0.lock().unwrap().notifications.clone();
-        let (input_text, cursor_column) = {
-            let text_input = self.text_input.lock().unwrap();
-            (text_input.text().to_owned(), text_input.cursor_column())
-        };
         terminal.draw(|frame| {
             let area = frame.area();
             let chunks = Layout::vertical([
                 Constraint::Min(0),
                 Constraint::Length(1),
-                Constraint::Length(1),
+                Constraint::Length(input_height),
                 Constraint::Length(1),
             ])
             .split(area);
             render_notifications(frame, chunks[0], &notifications, *history_has_content);
-            render_input(frame, chunks[2], &input_text, cursor_column);
+            let scroll = (cursor_row + 1).saturating_sub(chunks[2].height as usize);
+            let input = Paragraph::new(input_lines)
+                .scroll((scroll as u16, 0))
+                .style(Style::default().bg(Color::DarkGray).fg(Color::White));
+            frame.render_widget(input, chunks[2]);
+            frame.set_cursor_position((
+                chunks[2].x + cursor_column as u16,
+                chunks[2].y + (cursor_row - scroll) as u16,
+            ));
         })?;
         if shutdown {
             return Ok(true);
@@ -225,10 +242,47 @@ fn render_notifications(
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
-fn render_input(frame: &mut ratatui::Frame<'_>, area: Rect, text: &str, cursor_column: usize) {
-    let input = Paragraph::new(text).style(Style::default().bg(Color::DarkGray).fg(Color::White));
-    frame.render_widget(input, area);
-    frame.set_cursor_position((area.x.saturating_add(cursor_column as u16), area.y));
+fn wrap_input(text: &str, cursor: usize, width: usize) -> (Vec<Line<'static>>, usize, usize) {
+    let mut lines = vec![String::new()];
+    let mut column = 0;
+    let mut offset = 0;
+    let mut cursor_position = (0, 0);
+    for logical_line in text.split('\n') {
+        let span = Span::raw(logical_line);
+        for grapheme in span.styled_graphemes(Style::default()) {
+            let symbol_width = Span::raw(grapheme.symbol).width();
+            if column + symbol_width > width {
+                lines.push(String::new());
+                column = 0;
+            }
+            if offset == cursor {
+                cursor_position = (column, lines.len() - 1);
+            }
+            lines.last_mut().unwrap().push_str(grapheme.symbol);
+            column += symbol_width;
+            offset += grapheme.symbol.len();
+        }
+        if offset == cursor {
+            cursor_position = if column == width {
+                (0, lines.len())
+            } else {
+                (column, lines.len() - 1)
+            };
+            if column == width && offset == text.len() {
+                lines.push(String::new());
+            }
+        }
+        if offset < text.len() {
+            lines.push(String::new());
+            column = 0;
+            offset += 1;
+        }
+    }
+    (
+        lines.into_iter().map(Line::from).collect(),
+        cursor_position.0,
+        cursor_position.1,
+    )
 }
 
 fn append_message_lines(lines: &mut Vec<Line<'static>>, message: &crate::core::Message) {

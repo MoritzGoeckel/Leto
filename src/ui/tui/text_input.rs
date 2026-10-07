@@ -19,8 +19,8 @@ impl TextInput {
         &self.text
     }
 
-    pub fn cursor_column(&self) -> usize {
-        self.text[..self.cursor].chars().count()
+    pub fn cursor(&self) -> usize {
+        self.cursor
     }
 
     pub fn on_submit(&mut self, callback: impl FnMut(&str) + Send + 'static) {
@@ -45,6 +45,7 @@ impl TextInput {
             return;
         }
         match key.code {
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => self.insert_text("\n"),
             KeyCode::Enter => {
                 if let Some(callback) = &mut self.on_submit {
                     callback(&self.text);
