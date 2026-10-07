@@ -79,14 +79,9 @@ impl Tui {
         terminal.insert_before(1, |buffer| {
             Paragraph::new("").render(buffer.area, buffer);
         })?;
-        let mut viewport_height = 3;
         let mut history_has_content = false;
         let result = loop {
-            match self.tick(
-                &mut terminal,
-                &mut viewport_height,
-                &mut history_has_content,
-            ) {
+            match self.tick(&mut terminal, &mut history_has_content) {
                 Ok(true) => break Ok(()),
                 Ok(false) => {}
                 Err(error) => break Err(error),
@@ -103,15 +98,14 @@ impl Tui {
     fn tick(
         &mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-        viewport_height: &mut u16,
         history_has_content: &mut bool,
     ) -> io::Result<bool> {
-        let (pending_lines, shutdown, notification_count) = {
+        let (pending_lines, shutdown, notifications) = {
             let mut state = self.state.0.lock().unwrap();
             (
                 std::mem::take(&mut state.pending_lines),
                 state.shutdown,
-                state.notifications.len(),
+                state.notifications.clone(),
             )
         };
         *history_has_content |= !pending_lines.is_empty();
@@ -123,46 +117,21 @@ impl Tui {
         let input_height = input_lines
             .len()
             .min(size.height.saturating_sub(2) as usize) as u16;
-        let next_height = (notification_count as usize
-            + 2
-            + usize::from(*history_has_content && notification_count > 0)
-            + input_height as usize)
-            .min(size.height as usize) as u16;
-        if next_height != *viewport_height {
-            let viewport_top = if next_height > *viewport_height {
-                let added_rows = next_height - *viewport_height;
-                execute!(
-                    terminal.backend_mut(),
-                    MoveTo(0, size.height - 1),
-                    Print("\r\n".repeat(added_rows as usize)),
-                )?;
-                size.height - next_height
-            } else {
-                terminal.get_frame().area().y
-            };
-            terminal.clear()?;
-            execute!(terminal.backend_mut(), MoveTo(0, viewport_top))?;
-            *terminal = Terminal::with_options(
-                CrosstermBackend::new(io::stdout()),
-                TerminalOptions {
-                    viewport: Viewport::Inline(next_height),
-                },
-            )?;
-            terminal.clear()?;
-            *viewport_height = next_height;
-        }
+        let notification_height =
+            notifications.len() + usize::from(*history_has_content && !notifications.is_empty());
+        let viewport_height =
+            (notification_height + input_height as usize + 2).min(size.height as usize) as u16;
+        resize_viewport(terminal, viewport_height)?;
         if !pending_lines.is_empty() {
-            let width = terminal.size()?.width as usize;
             let height = pending_lines
                 .iter()
-                .map(|line| line.width().max(1).div_ceil(width))
+                .map(|line| line.width().max(1).div_ceil(size.width as usize))
                 .sum::<usize>() as u16;
             let paragraph = Paragraph::new(pending_lines).wrap(Wrap { trim: false });
             terminal.insert_before(height, move |buffer| {
                 paragraph.render(buffer.area, buffer);
             })?;
         }
-        let notifications = self.state.0.lock().unwrap().notifications.clone();
         terminal.draw(|frame| {
             let area = frame.area();
             let chunks = Layout::vertical([
@@ -173,15 +142,7 @@ impl Tui {
             ])
             .split(area);
             render_notifications(frame, chunks[0], &notifications, *history_has_content);
-            let scroll = (cursor_row + 1).saturating_sub(chunks[2].height as usize);
-            let input = Paragraph::new(input_lines)
-                .scroll((scroll as u16, 0))
-                .style(Style::default().bg(Color::DarkGray).fg(Color::White));
-            frame.render_widget(input, chunks[2]);
-            frame.set_cursor_position((
-                chunks[2].x + cursor_column as u16,
-                chunks[2].y + (cursor_row - scroll) as u16,
-            ));
+            render_input(frame, chunks[2], input_lines, cursor_column, cursor_row);
         })?;
         if shutdown {
             return Ok(true);
@@ -217,6 +178,54 @@ impl Tui {
         }
         false
     }
+}
+
+fn resize_viewport(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    height: u16,
+) -> io::Result<()> {
+    let area = terminal.get_frame().area();
+    if height == area.height {
+        return Ok(());
+    }
+    let viewport_top = if height > area.height {
+        let size = terminal.size()?;
+        execute!(
+            terminal.backend_mut(),
+            MoveTo(0, size.height - 1),
+            Print("\r\n".repeat((height - area.height) as usize)),
+        )?;
+        size.height - height
+    } else {
+        area.y
+    };
+    terminal.clear()?;
+    execute!(terminal.backend_mut(), MoveTo(0, viewport_top))?;
+    *terminal = Terminal::with_options(
+        CrosstermBackend::new(io::stdout()),
+        TerminalOptions {
+            viewport: Viewport::Inline(height),
+        },
+    )?;
+    terminal.clear()
+}
+
+fn render_input(
+    frame: &mut ratatui::Frame<'_>,
+    area: Rect,
+    lines: Vec<Line<'static>>,
+    cursor_column: usize,
+    cursor_row: usize,
+) {
+    let scroll = (cursor_row + 1).saturating_sub(area.height as usize);
+    let input = Paragraph::new(lines)
+        .scroll((scroll as u16, 0))
+        .style(Style::default().bg(Color::DarkGray).fg(Color::White));
+    frame.render_widget(input, area);
+    frame.set_cursor_position((
+        area.x + cursor_column as u16,
+        area.y + (cursor_row - scroll) as u16,
+    ));
 }
 
 fn render_notifications(
