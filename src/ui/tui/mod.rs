@@ -316,6 +316,10 @@ impl Ui for Tui {
         })
     }
 
+    fn clear_notifications(&mut self) {
+        self.state.0.lock().unwrap().notifications.clear();
+    }
+
     fn inform(&mut self, title: &str, message: &str) {
         let mut state = self.state.0.lock().unwrap();
         state

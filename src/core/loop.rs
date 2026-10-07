@@ -80,6 +80,7 @@ impl Loop {
             .inform("Signed in", "Enter a message, or /exit to quit.");
         while !self.exit {
             let input = self.ui.lock().unwrap().wait_for_next_prompt()?;
+            self.ui.lock().unwrap().clear_notifications();
             if is_command(&input) {
                 self.ui.lock().unwrap().on_command(&input);
                 self.run_command(&input)?;
