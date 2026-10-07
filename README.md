@@ -18,3 +18,5 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 - Stop request
 - Input queue
 - Message rendering
+- Clear seems to not work. Also add feedback
+- Extend background for user message
