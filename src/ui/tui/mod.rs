@@ -25,6 +25,7 @@ use ratatui::{
 
 use super::Ui;
 mod text_input;
+mod tools;
 use text_input::{INPUT_BACKGROUND, INPUT_PADDING, TextInput, render_input};
 
 #[derive(Clone)]
@@ -112,6 +113,10 @@ impl Tui {
         };
         let working = working_since.is_some();
         *history_has_content |= !pending_lines.is_empty();
+        let mut pending_lines = pending_lines;
+        if !pending_lines.is_empty() {
+            pending_lines.push(Line::default());
+        }
         let size = terminal.size()?;
         let (input_lines, cursor_column, cursor_row) = self
             .text_input
@@ -264,9 +269,7 @@ fn render_notifications(
 }
 
 fn append_message_lines(lines: &mut Vec<Line<'static>>, message: &crate::core::Message) {
-    use crate::core::{
-        AssistantContent, Message, SystemContent, ToolResultContent, UserContent, UserContentBlock,
-    };
+    use crate::core::{AssistantContent, Message, SystemContent, UserContent, UserContentBlock};
     match message {
         Message::System(message) => match &message.content {
             SystemContent::Text(text) => lines.push(Line::from(format!("system> {text}"))),
@@ -295,31 +298,16 @@ fn append_message_lines(lines: &mut Vec<Line<'static>>, message: &crate::core::M
             for content in &message.content {
                 match content {
                     AssistantContent::Text(text) => {
-                        lines.push(Line::from(format!("assistant> {}", text.text)))
+                        lines.push(Line::from(format!("{}", text.text)))
                     }
                     AssistantContent::Thinking(thinking) => {
                         lines.push(Line::from(format!("thinking> {}", thinking.thinking)))
                     }
-                    AssistantContent::ToolCall(call) => lines.push(Line::from(format!(
-                        "tool call> {} {:?}",
-                        call.name, call.arguments
-                    ))),
+                    AssistantContent::ToolCall(call) => tools::append_call(lines, call),
                 }
             }
         }
-        Message::ToolResult(message) => {
-            for content in &message.content {
-                match content {
-                    ToolResultContent::Text(text) => {
-                        lines.push(Line::from(format!("{}> {}", message.tool_name, text.text)))
-                    }
-                    ToolResultContent::Image(image) => lines.push(Line::from(format!(
-                        "{}> [image: {}]",
-                        message.tool_name, image.mime_type
-                    ))),
-                }
-            }
-        }
+        Message::ToolResult(message) => tools::append_result(lines, message),
     }
 }
 
