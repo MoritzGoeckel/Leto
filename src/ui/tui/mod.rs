@@ -2,7 +2,7 @@ use std::{
     collections::VecDeque,
     io,
     sync::{Arc, Condvar, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crossterm::{
@@ -38,7 +38,7 @@ struct State {
     pending_lines: Vec<Line<'static>>,
     input_responses: VecDeque<String>,
     notifications: Vec<(String, String)>,
-    working: bool,
+    working_since: Option<Instant>,
     shutdown: bool,
 }
 
@@ -101,15 +101,16 @@ impl Tui {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         history_has_content: &mut bool,
     ) -> io::Result<bool> {
-        let (pending_lines, shutdown, notifications, working) = {
+        let (pending_lines, shutdown, notifications, working_since) = {
             let mut state = self.state.0.lock().unwrap();
             (
                 std::mem::take(&mut state.pending_lines),
                 state.shutdown,
                 state.notifications.clone(),
-                state.working,
+                state.working_since,
             )
         };
+        let working = working_since.is_some();
         *history_has_content |= !pending_lines.is_empty();
         let size = terminal.size()?;
         let (input_lines, cursor_column, cursor_row) = self
@@ -153,8 +154,16 @@ impl Tui {
             ])
             .split(area);
             render_notifications(frame, chunks[0], &notifications, *history_has_content);
-            if working {
-                frame.render_widget(Paragraph::new("Working..."), chunks[2]);
+            if let Some(started) = working_since {
+                let spinner =
+                    ['/', '-', '\\', '|'][(started.elapsed().as_millis() / 150 % 4) as usize];
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        Span::styled("Working ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(spinner.to_string(), Style::default().fg(Color::Yellow)),
+                    ])),
+                    chunks[2],
+                );
             }
             for separator in [chunks[4], chunks[6]] {
                 frame.render_widget(
@@ -333,11 +342,11 @@ impl Ui for Tui {
     }
 
     fn start_working(&mut self) {
-        self.state.0.lock().unwrap().working = true;
+        self.state.0.lock().unwrap().working_since = Some(Instant::now());
     }
 
     fn stop_working(&mut self) {
-        self.state.0.lock().unwrap().working = false;
+        self.state.0.lock().unwrap().working_since = None;
     }
 
     fn inform(&mut self, title: &str, message: &str) {
