@@ -20,3 +20,5 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 - Message rendering
 - Clear seems to not work. Also add feedback
 - Extend background for user message
+- Write history
+- Resume conversation

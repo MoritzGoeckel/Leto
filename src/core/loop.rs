@@ -1,5 +1,9 @@
 use crate::{
-    core::{Context, Message, StreamOptions, UserContent, UserMessage, tools::ToolRuntime},
+    core::{
+        Context, Message, StreamOptions, UserContent, UserMessage,
+        events::{EventLog, EventValue},
+        tools::ToolRuntime,
+    },
     plugins::PluginManager,
     provider::{AuthError, Provider, openai_chatgpt::OpenAiChatGpt},
     ui::Ui,
@@ -16,6 +20,7 @@ pub struct Loop {
     context: Context,
     exit: bool,
     commands: HashMap<String, fn(&mut Self) -> Result<(), Box<dyn std::error::Error>>>,
+    events: EventLog,
 }
 
 impl Loop {
@@ -36,14 +41,14 @@ impl Loop {
         }
         let mut tools = ToolRuntime::new(Arc::clone(&ui), config, Arc::clone(&plugins));
         tools.add_tools(crate::core::tools::buildin::make_default_tools());
-        let agents_context = Self::load_agents_context();
-        if let Some((path, _)) = &agents_context {
+        let agents_md = Self::load_agents_md();
+        if let Some((path, _)) = &agents_md {
             ui.lock()
                 .unwrap()
                 .note(&format!("Loaded {}", path.display()));
         }
         let context = Context {
-            system_prompt: agents_context.map(|(_, content)| content),
+            system_prompt: agents_md.map(|(_, content)| content),
             tools: Some(
                 tools
                     .tools
@@ -53,6 +58,13 @@ impl Loop {
             ),
             ..Context::default()
         };
+        let mut events = EventLog::create(
+            "conversation.jsonl",
+            std::env::current_dir()?.display().to_string(),
+        )?;
+        if let Some(system_prompt) = &context.system_prompt {
+            events.append(EventValue::SystemPrompt(system_prompt.clone()))?;
+        }
         Ok(Self {
             ui,
             plugins,
@@ -61,6 +73,7 @@ impl Loop {
             context,
             exit: false,
             commands: Self::make_commands(),
+            events,
         })
     }
 
@@ -83,6 +96,7 @@ impl Loop {
             self.ui.lock().unwrap().clear_notifications();
             if is_command(&input) {
                 self.ui.lock().unwrap().on_command(&input);
+                self.events.append(EventValue::Command(input.clone()))?;
                 self.run_command(&input)?;
                 continue;
             }
@@ -99,12 +113,16 @@ impl Loop {
                 content: UserContent::Text(input),
                 timestamp: crate::core::now_ms(),
             };
-            let user_message = Message::User(
-                self.plugins
-                    .lock()
-                    .unwrap()
-                    .transform_user_message(user_message)?,
-            );
+            let user_message = self
+                .plugins
+                .lock()
+                .unwrap()
+                .transform_user_message(user_message)?;
+            self.events
+                .append(EventValue::UserMessage(serde_json::to_value(
+                    &user_message,
+                )?))?;
+            let user_message = Message::User(user_message);
             self.ui.lock().unwrap().on_message(&user_message);
             self.context.messages.push(user_message);
             self.ui.lock().unwrap().start_working();
@@ -128,13 +146,18 @@ impl Loop {
                     .content
                     .iter()
                     .any(|content| matches!(content, crate::core::AssistantContent::ToolCall(_)));
+                self.events
+                    .append(EventValue::AssistantMessage(serde_json::to_value(
+                        &message,
+                    )?))?;
                 let assistant_message = Message::Assistant(message.clone());
                 self.ui.lock().unwrap().on_message(&assistant_message);
                 self.context.messages.push(assistant_message);
                 for result in self.tools.run_tool_calls(message) {
-                    let result = Message::ToolResult(
-                        self.plugins.lock().unwrap().transform_tool_result(result)?,
-                    );
+                    let result = self.plugins.lock().unwrap().transform_tool_result(result)?;
+                    self.events
+                        .append(EventValue::ToolResult(serde_json::to_value(&result)?))?;
+                    let result = Message::ToolResult(result);
                     self.ui.lock().unwrap().on_message(&result);
                     self.context.messages.push(result);
                 }
@@ -155,7 +178,7 @@ impl Loop {
         ])
     }
 
-    fn load_agents_context() -> Option<(std::path::PathBuf, String)> {
+    fn load_agents_md() -> Option<(std::path::PathBuf, String)> {
         let mut directory = std::env::current_dir().ok()?;
         loop {
             let path = directory.join("AGENTS.md");
