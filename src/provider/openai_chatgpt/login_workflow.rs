@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::config::Config;
-use crate::ui::Ui;
+use crate::ui::{AskOptions, Ui};
 
 use super::{Credential, begin_login, exchange_callback};
 
@@ -15,7 +15,7 @@ pub fn login_and_save(
     ui: &mut dyn Ui,
 ) -> Result<Credential, Box<dyn std::error::Error>> {
     let login = begin_login("00000000-0000-4000-8000-000000000001");
-    let use_listener = ui.wait_for_next_prompt()? == "y";
+    let use_listener = ui.ask(AskOptions::default())? == "y";
     let callback_receiver = if use_listener {
         Some(start_callback_listener()?)
     } else {
@@ -36,7 +36,7 @@ pub fn login_and_save(
     let callback_url = if let Some(receiver) = callback_receiver {
         receiver.recv()?
     } else {
-        ui.wait_for_next_prompt()?
+        ui.ask(AskOptions::default())?
     };
     let credential = exchange_callback(&login, &callback_url)?;
     config.set_provider("openai", serde_json::to_value(&credential)?);

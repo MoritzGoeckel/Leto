@@ -13,12 +13,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut plugins = plugins::PluginManager::new();
     let ask_ui = Arc::clone(&ui);
     plugins.register_method("ask_user", move |params: serde_json::Value| {
-        Ok(serde_json::json!(
-            ask_ui
-                .lock()
-                .unwrap()
-                .ask(params["message"].as_str().unwrap())?
-        ))
+        let mut ui = ask_ui.lock().unwrap();
+        ui.append_message_str(params["message"].as_str().unwrap());
+        Ok(serde_json::json!(ui.ask(ui::AskOptions {
+            background: ratatui::style::Color::Rgb(45, 39, 26),
+            form_text: "Answer here...".to_owned(),
+            ..ui::AskOptions::default()
+        })?))
     });
     plugins.start(&config)?;
     // let resume = std::env::args().any(|argument| argument == "--resume");

@@ -23,10 +23,10 @@ use ratatui::{
     widgets::{Paragraph, Widget, Wrap},
 };
 
-use super::Ui;
+use super::{AskOptions, INPUT_BACKGROUND, Ui};
 mod text_input;
 mod tools;
-use text_input::{ASK_BACKGROUND, INPUT_BACKGROUND, INPUT_PADDING, TextInput, render_input};
+use text_input::{INPUT_PADDING, TextInput, render_input};
 
 #[derive(Clone)]
 pub struct Tui {
@@ -37,11 +37,24 @@ pub struct Tui {
 #[derive(Default)]
 struct State {
     pending_lines: Vec<Line<'static>>,
+    history_has_content: bool,
     input_responses: VecDeque<String>,
-    asking: bool,
-    answer: Option<String>,
+    input_options: AskOptions,
     working_since: Option<Instant>,
     shutdown: bool,
+}
+
+impl State {
+    fn append_lines(&mut self, lines: Vec<Line<'static>>) {
+        if lines.is_empty() {
+            return;
+        }
+        if self.history_has_content {
+            self.pending_lines.push(Line::default());
+        }
+        self.pending_lines.extend(lines);
+        self.history_has_content = true;
+    }
 }
 
 impl Tui {
@@ -52,13 +65,7 @@ impl Tui {
         text_input.on_submit(move |text| {
             let (lock, wake) = &*submit_state;
             let mut state = lock.lock().unwrap();
-            if state.asking {
-                state.answer = Some(text.to_owned());
-                state.asking = false;
-                state.pending_lines.push(user_message_line(text));
-            } else {
-                state.input_responses.push_back(text.to_owned());
-            }
+            state.input_responses.push_back(text.to_owned());
             wake.notify_all();
         });
         Self {
@@ -86,9 +93,8 @@ impl Tui {
         terminal.insert_before(1, |buffer| {
             Paragraph::new("").render(buffer.area, buffer);
         })?;
-        let mut history_has_content = false;
         let result = loop {
-            match self.tick(&mut terminal, &mut history_has_content) {
+            match self.tick(&mut terminal) {
                 Ok(true) => break Ok(()),
                 Ok(false) => {}
                 Err(error) => break Err(error),
@@ -102,38 +108,28 @@ impl Tui {
         result
     }
 
-    fn tick(
-        &mut self,
-        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-        history_has_content: &mut bool,
-    ) -> io::Result<bool> {
-        let (pending_lines, shutdown, working_since, asking) = {
+    fn tick(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<bool> {
+        let (pending_lines, shutdown, working_since, input_options, history_has_content) = {
             let mut state = self.state.0.lock().unwrap();
             (
                 std::mem::take(&mut state.pending_lines),
                 state.shutdown,
                 state.working_since,
-                state.asking,
+                state.input_options.clone(),
+                state.history_has_content,
             )
         };
         let working = working_since.is_some();
-        let mut pending_lines = pending_lines;
-        if !pending_lines.is_empty() {
-            if *history_has_content {
-                pending_lines.insert(0, Line::default());
-            }
-            *history_has_content = true;
-        }
         let size = terminal.size()?;
         let (input_lines, cursor_column, cursor_row) = self
             .text_input
             .lock()
             .unwrap()
-            .wrapped_lines((size.width - 2 * INPUT_PADDING) as usize, asking);
+            .wrapped_lines((size.width - 2 * INPUT_PADDING) as usize, &input_options);
         let input_height = input_lines
             .len()
             .min(size.height.saturating_sub(4) as usize) as u16;
-        let working_separator_height = u16::from(working && *history_has_content);
+        let working_separator_height = u16::from(working && history_has_content);
         let working_height = u16::from(working);
         let viewport_height = (input_height as usize
             + 4
@@ -174,11 +170,7 @@ impl Tui {
             }
             for separator in [chunks[4], chunks[6]] {
                 frame.render_widget(
-                    Paragraph::new("").style(Style::default().bg(if asking {
-                        ASK_BACKGROUND
-                    } else {
-                        INPUT_BACKGROUND
-                    })),
+                    Paragraph::new("").style(Style::default().bg(input_options.background)),
                     separator,
                 );
             }
@@ -188,7 +180,7 @@ impl Tui {
                 input_lines,
                 cursor_column,
                 cursor_row,
-                asking,
+                &input_options,
             );
         })?;
         if shutdown {
@@ -308,36 +300,18 @@ fn append_message_lines(lines: &mut Vec<Line<'static>>, message: &crate::core::M
 }
 
 impl Ui for Tui {
-    fn wait_for_next_prompt(&mut self) -> io::Result<String> {
+    fn ask(&mut self, options: AskOptions) -> io::Result<String> {
         let (lock, wake) = &*self.state;
         let mut state = lock.lock().unwrap();
+        state.input_options = options;
         while state.input_responses.is_empty() && !state.shutdown {
             state = wake.wait(state).unwrap();
         }
-        Ok(if state.shutdown {
-            "/exit".to_owned()
-        } else {
-            state.input_responses.pop_front().unwrap()
-        })
-    }
-
-    fn ask(&mut self, message: &str) -> io::Result<String> {
-        let (lock, wake) = &*self.state;
-        let mut state = lock.lock().unwrap();
-        assert!(!state.asking, "an answer is already pending");
-        state.pending_lines.extend(
-            message
-                .lines()
-                .map(|line| Line::styled(line.to_owned(), Style::default().fg(Color::Yellow))),
-        );
-        state.asking = true;
-        while state.answer.is_none() && !state.shutdown {
-            state = wake.wait(state).unwrap();
-        }
+        state.input_options = AskOptions::default();
         if state.shutdown {
             return Err(io::Error::from(io::ErrorKind::Interrupted));
         }
-        Ok(state.answer.take().unwrap())
+        Ok(state.input_responses.pop_front().unwrap())
     }
 
     fn start_working(&mut self) {
@@ -349,29 +323,23 @@ impl Ui for Tui {
     }
 
     fn append_message_str(&mut self, note: &str) {
-        self.state
-            .0
-            .lock()
-            .unwrap()
-            .pending_lines
-            .extend(note.lines().map(|line| Line::from(line.to_owned())));
+        self.state.0.lock().unwrap().append_lines(
+            note.lines()
+                .map(|line| Line::from(line.to_owned()))
+                .collect(),
+        );
     }
 
     fn append_message(&mut self, message: &crate::core::Message) {
         let mut lines = Vec::new();
         append_message_lines(&mut lines, message);
-        self.state.0.lock().unwrap().pending_lines.extend(lines);
+        self.state.0.lock().unwrap().append_lines(lines);
     }
 
     fn append_command(&mut self, command: &str) {
-        self.state
-            .0
-            .lock()
-            .unwrap()
-            .pending_lines
-            .push(Line::styled(
-                command.to_owned(),
-                Style::default().fg(Color::Cyan),
-            ));
+        self.state.0.lock().unwrap().append_lines(vec![Line::styled(
+            command.to_owned(),
+            Style::default().fg(Color::Cyan),
+        )]);
     }
 }

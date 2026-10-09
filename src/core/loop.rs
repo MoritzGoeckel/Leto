@@ -6,8 +6,9 @@ use crate::{
     },
     plugins::PluginManager,
     provider::{AuthError, Provider, openai_chatgpt::OpenAiChatGpt},
-    ui::Ui,
+    ui::{AskOptions, Ui},
 };
+use ratatui::style::Color;
 use std::collections::HashMap;
 use std::fs;
 use std::io;
@@ -73,7 +74,14 @@ impl Loop {
             .expect("provider has no models");
         self.plugins.lock().unwrap().notify_new_conversation()?;
         while !self.exit {
-            let input = self.ui.lock().unwrap().wait_for_next_prompt()?;
+            let input = match self.ui.lock().unwrap().ask(AskOptions {
+                form_text: "instructions...".to_owned(),
+                ..AskOptions::default()
+            }) {
+                Ok(input) => input,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => break,
+                Err(error) => return Err(error.into()),
+            };
             if is_command(&input) {
                 self.ui.lock().unwrap().append_command(&input);
                 self.events
@@ -186,10 +194,12 @@ impl Loop {
             }
         }
     }
+
     fn exit_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.exit = true;
         Ok(())
     }
+
     fn resume_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let conversations = crate::core::events::list_conversations()?
             .into_iter()
@@ -208,10 +218,14 @@ impl Loop {
             .map(|path| path.file_name().unwrap().to_string_lossy())
             .collect::<Vec<_>>();
         let (answer, mut context, events) = loop {
-            let answer = self.ui.lock().unwrap().ask(&format!(
-                "Saved conversations:\n{}\nEnter a conversation filename:",
-                names.join("\n")
-            ))?;
+            let mut ui = self.ui.lock().unwrap();
+            ui.append_message_str(&format!("{}", names.join("\n")));
+            let answer = ui.ask(AskOptions {
+                background: Color::Rgb(45, 39, 26),
+                form_text: "Conversation filename...".to_owned(),
+                ..AskOptions::default()
+            })?;
+            drop(ui);
             let Some(path) = conversations
                 .iter()
                 .find(|path| path.file_name().unwrap().to_str().unwrap() == answer)
@@ -249,6 +263,7 @@ impl Loop {
         }
         Ok(())
     }
+
     fn clear_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let agents_md = Self::load_agents_md();
         self.context = Context {
