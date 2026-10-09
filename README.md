@@ -15,6 +15,4 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 - Paste into input
 - Stop request
 - Input queue
-- Clear seems to not work. Also add feedback
-- Resume conversation
 - Remove read/write/edit

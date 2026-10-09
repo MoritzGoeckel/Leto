@@ -24,7 +24,7 @@ pub(super) fn append_result(lines: &mut Vec<Line<'static>>, message: &ToolResult
     for content in &message.content {
         let body = match (message.tool_name.as_str(), content) {
             ("bash", ToolResultContent::Json(result)) => bash_result(result),
-            ("bash", ToolResultContent::Text(_)) => panic!("bash result must be JSON"),
+            ("bash", ToolResultContent::Text(text)) => text.text.clone(),
             ("read", ToolResultContent::Text(text)) => text.text.clone(),
             ("read", _) => panic!("read result must be text"),
             ("write" | "edit", ToolResultContent::Text(text)) => text.text.clone(),
