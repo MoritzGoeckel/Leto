@@ -8,24 +8,23 @@ use crate::{
     provider::{AuthError, Provider, openai_chatgpt::OpenAiChatGpt},
     ui::{AskOptions, Ui},
 };
-use ratatui::style::Color;
-use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::sync::{Arc, Mutex};
 
 pub struct Loop {
-    ui: Arc<Mutex<dyn Ui>>,
-    plugins: Arc<Mutex<PluginManager>>,
-    config: crate::config::Config,
-    provider: OpenAiChatGpt,
-    model: crate::core::Model,
-    tools: ToolRuntime,
-    context: Context,
-    exit: bool,
-    commands: HashMap<String, fn(&mut Self) -> Result<(), Box<dyn std::error::Error>>>,
-    reasoning: Option<crate::core::ThinkingLevel>,
-    events: EventLog,
+    pub(super) ui: Arc<Mutex<dyn Ui>>,
+    pub(super) plugins: Arc<Mutex<PluginManager>>,
+    pub(super) config: crate::config::Config,
+    pub(super) provider: OpenAiChatGpt,
+    pub(super) model: crate::core::Model,
+    pub(super) tools: ToolRuntime,
+    pub(super) context: Context,
+    pub(super) exit: bool,
+    pub(super) commands:
+        std::collections::HashMap<String, fn(&mut Self) -> Result<(), Box<dyn std::error::Error>>>,
+    pub(super) reasoning: Option<crate::core::ThinkingLevel>,
+    pub(super) events: EventLog,
 }
 
 impl Loop {
@@ -80,11 +79,11 @@ impl Loop {
             tools,
             context: Context::default(),
             exit: false,
-            commands: Self::make_commands(),
+            commands: crate::core::commands::make_commands(),
             reasoning: model_config.and_then(|config| config.reasoning),
             events: EventLog::create()?,
         };
-        loop_state.clear_command()?;
+        crate::core::commands::clear(&mut loop_state)?;
         Ok(loop_state)
     }
 
@@ -184,17 +183,7 @@ impl Loop {
         Ok(())
     }
 
-    fn make_commands() -> HashMap<String, fn(&mut Self) -> Result<(), Box<dyn std::error::Error>>> {
-        HashMap::from([
-            ("exit".to_owned(), Self::exit_command as _),
-            ("clear".to_owned(), Self::clear_command as _),
-            ("resume".to_owned(), Self::resume_command as _),
-            ("model".to_owned(), Self::model_command as _),
-            ("reasoning".to_owned(), Self::reasoning_command as _),
-        ])
-    }
-
-    fn load_agents_md() -> Option<(std::path::PathBuf, String)> {
+    pub(super) fn load_agents_md() -> Option<(std::path::PathBuf, String)> {
         let mut directory = std::env::current_dir().ok()?;
         loop {
             let path = directory.join("AGENTS.md");
@@ -219,160 +208,6 @@ impl Loop {
                 Ok(())
             }
         }
-    }
-
-    fn exit_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.exit = true;
-        Ok(())
-    }
-
-    fn resume_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let conversations = crate::core::events::list_conversations()?
-            .into_iter()
-            .rev()
-            .take(10)
-            .collect::<Vec<_>>();
-        if conversations.is_empty() {
-            self.ui
-                .lock()
-                .unwrap()
-                .append_message_str("No saved conversations");
-            return Ok(());
-        }
-        let names = conversations
-            .iter()
-            .map(|path| path.file_name().unwrap().to_string_lossy())
-            .collect::<Vec<_>>();
-        let (answer, mut context, events) = loop {
-            let mut ui = self.ui.lock().unwrap();
-            ui.append_message_str(&format!("{}", names.join("\n")));
-            let answer = ui.ask_styled(AskOptions {
-                background: Color::Rgb(45, 39, 26),
-                form_text: "Conversation filename...".to_owned(),
-                ..AskOptions::default()
-            })?;
-            drop(ui);
-            let Some(path) = conversations
-                .iter()
-                .find(|path| path.file_name().unwrap().to_str().unwrap() == answer)
-            else {
-                self.ui
-                    .lock()
-                    .unwrap()
-                    .append_message_str("Conversation not found");
-                continue;
-            };
-            let loaded = EventLog::read_context(path)
-                .and_then(|context| EventLog::open(path).map(|events| (context, events)));
-            match loaded {
-                Ok((context, events)) => break (answer, context, events),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    self.ui
-                        .lock()
-                        .unwrap()
-                        .append_message_str("Conversation not found");
-                }
-                Err(error) => return Err(error.into()),
-            }
-        };
-        context.tools = self.context.tools.clone();
-        self.context = context;
-        self.events = events;
-        let mut ui = self.ui.lock().unwrap();
-        ui.append_message_str(&format!("Resumed {answer}"));
-        let earlier_messages = self.context.messages.len().saturating_sub(5);
-        if earlier_messages > 0 {
-            ui.append_message_str(&format!("{earlier_messages} earlier messages"));
-        }
-        for message in self.context.messages.iter().skip(earlier_messages) {
-            ui.append_message(message);
-        }
-        Ok(())
-    }
-
-    fn model_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let models = self.provider.get_models().into_values().collect::<Vec<_>>();
-        let names = models
-            .iter()
-            .map(|model| model.name.as_str())
-            .collect::<Vec<_>>();
-        let mut ui = self.ui.lock().unwrap();
-        ui.append_message_str(&names.join("\n"));
-        let answer = ui.ask_styled(AskOptions {
-            background: Color::Rgb(45, 39, 26),
-            form_text: "Model name...".to_owned(),
-            ..AskOptions::default()
-        })?;
-        if let Some(model) = models.into_iter().find(|model| model.name == answer) {
-            self.model = model;
-            self.config.set_model(crate::config::ModelConfig {
-                provider: self.model.provider.clone(),
-                model: self.model.id.clone(),
-                reasoning: self.reasoning.clone(),
-            });
-            self.config.save()?;
-            ui.append_message_str(&format!("Model has been changed to {}", self.model.name));
-        } else {
-            ui.append_message_str("Model not found");
-        }
-        Ok(())
-    }
-
-    fn reasoning_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-        let values = [
-            crate::core::ThinkingLevel::Off,
-            crate::core::ThinkingLevel::Minimal,
-            crate::core::ThinkingLevel::Low,
-            crate::core::ThinkingLevel::Medium,
-            crate::core::ThinkingLevel::High,
-            crate::core::ThinkingLevel::Xhigh,
-            crate::core::ThinkingLevel::Max,
-        ];
-        let mut ui = self.ui.lock().unwrap();
-        ui.append_message_str(&levels.join("\n"));
-        let answer = ui.ask_styled(AskOptions {
-            background: Color::Rgb(45, 39, 26),
-            form_text: "Reasoning level...".to_owned(),
-            ..AskOptions::default()
-        })?;
-        if let Some((index, _)) = levels
-            .iter()
-            .enumerate()
-            .find(|(_, level)| **level == answer)
-        {
-            self.reasoning = Some(values[index].clone());
-            self.config.set_model(crate::config::ModelConfig {
-                provider: self.model.provider.clone(),
-                model: self.model.id.clone(),
-                reasoning: self.reasoning.clone(),
-            });
-            self.config.save()?;
-            ui.append_message_str(&format!("Reasoning has been changed to {answer}"));
-        } else {
-            ui.append_message_str("Reasoning level not found");
-        }
-        Ok(())
-    }
-
-    fn clear_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let agents_md = Self::load_agents_md();
-        self.context = Context {
-            system_prompt: agents_md.map(|(_, content)| content),
-            tools: Some(
-                self.tools
-                    .tools
-                    .values()
-                    .map(|tool| tool.definition.clone())
-                    .collect(),
-            ),
-            ..Context::default()
-        };
-        if let Some(system_prompt) = &self.context.system_prompt {
-            self.events
-                .append(EventValue::SystemPrompt(system_prompt.clone()), false)?;
-        }
-        Ok(())
     }
 }
 

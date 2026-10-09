@@ -1,4 +1,4 @@
-mod login_workflow;
+mod login;
 mod oauth;
 mod responses;
 
@@ -10,7 +10,7 @@ use crate::{
 };
 use std::collections::BTreeMap;
 
-pub use login_workflow::login_and_save;
+pub use login::login_and_save;
 pub use oauth::{ChatGptLogin, Credential, begin_login, exchange_callback, exchange_code, refresh};
 pub use responses::stream;
 
