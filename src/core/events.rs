@@ -1,7 +1,40 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
-use std::io::{BufWriter, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
+
+#[derive(Deserialize)]
+struct LoadedEvent {
+    #[serde(rename = "type")]
+    event_type: String,
+    value: Option<serde_json::Value>,
+}
+
+pub fn load_context(path: impl AsRef<Path>) -> std::io::Result<crate::core::Context> {
+    let mut context = crate::core::Context::default();
+    for line in BufReader::new(File::open(path)?).lines() {
+        let event: LoadedEvent = serde_json::from_str(&line?).map_err(std::io::Error::other)?;
+        match event.event_type.as_str() {
+            "system_prompt" => {
+                context.system_prompt = Some(
+                    serde_json::from_value(event.value.unwrap()).map_err(std::io::Error::other)?,
+                )
+            }
+            "user_message" => context.messages.push(crate::core::Message::User(
+                serde_json::from_value(event.value.unwrap()).map_err(std::io::Error::other)?,
+            )),
+            "assistant_message" => context.messages.push(crate::core::Message::Assistant(
+                serde_json::from_value(event.value.unwrap()).map_err(std::io::Error::other)?,
+            )),
+            "tool_result" => context.messages.push(crate::core::Message::ToolResult(
+                serde_json::from_value(event.value.unwrap()).map_err(std::io::Error::other)?,
+            )),
+            "pwd" | "command" => {}
+            event_type => panic!("unexpected event type: {event_type}"),
+        }
+    }
+    Ok(context)
+}
 
 #[derive(Serialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]

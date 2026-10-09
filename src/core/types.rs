@@ -225,6 +225,7 @@ pub struct ToolResultMessage {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ToolResultContent {
     Text(TextContent),
+    Json(Value),
     Image(ImageContent),
 }
 

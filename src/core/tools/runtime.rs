@@ -61,17 +61,27 @@ impl ToolRuntime {
                             }
                         }
                     };
-                    let (text, is_error) = match result {
-                        Ok(value) => (value.to_string(), false),
-                        Err(error) => (error, true),
+                    let (result_content, is_error) = match result {
+                        Ok(Value::String(text)) => (
+                            ToolResultContent::Text(TextContent {
+                                text,
+                                text_signature: None,
+                            }),
+                            false,
+                        ),
+                        Ok(value) => (ToolResultContent::Json(value), false),
+                        Err(error) => (
+                            ToolResultContent::Text(TextContent {
+                                text: error,
+                                text_signature: None,
+                            }),
+                            true,
+                        ),
                     };
                     let result = ToolResultMessage {
                         tool_call_id: call.id,
                         tool_name: call.name,
-                        content: vec![ToolResultContent::Text(TextContent {
-                            text,
-                            text_signature: None,
-                        })],
+                        content: vec![result_content],
                         details: None,
                         usage: None,
                         nested_calls: None,

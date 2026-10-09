@@ -22,23 +22,21 @@ pub(super) fn append_call(lines: &mut Vec<Line<'static>>, call: &ToolCall) {
 
 pub(super) fn append_result(lines: &mut Vec<Line<'static>>, message: &ToolResultMessage) {
     for content in &message.content {
-        let text = match content {
-            ToolResultContent::Text(text) => &text.text,
-            ToolResultContent::Image(image) => {
-                lines.push(Line::from(format!("[image: {}]", image.mime_type)));
-                continue;
-            }
+        let body = match (message.tool_name.as_str(), content) {
+            ("bash", ToolResultContent::Json(result)) => bash_result(result),
+            ("bash", ToolResultContent::Text(_)) => panic!("bash result must be JSON"),
+            ("read", ToolResultContent::Text(text)) => text.text.clone(),
+            ("read", _) => panic!("read result must be text"),
+            ("write" | "edit", ToolResultContent::Text(text)) => text.text.clone(),
+            ("write" | "edit", _) => panic!("write/edit result must be text"),
+            (_, ToolResultContent::Text(text)) => text.text.clone(),
+            (_, ToolResultContent::Json(value)) => value.to_string(),
+            (_, ToolResultContent::Image(image)) => format!("[image: {}]", image.mime_type),
         };
         let color = if message.is_error {
             Color::Red
         } else {
             Color::DarkGray
-        };
-        let body = match message.tool_name.as_str() {
-            "bash" => bash_result(text, message.is_error),
-            "read" => read_result(text, message.is_error),
-            "write" | "edit" => write_result(text, message.is_error),
-            _ => text.clone(),
         };
         append_result_body(lines, &body, color);
     }
@@ -91,11 +89,7 @@ fn edit_call(lines: &mut Vec<Line<'static>>, arguments: &serde_json::Map<String,
     }
 }
 
-fn bash_result(text: &str, is_error: bool) -> String {
-    if is_error {
-        return text.to_owned();
-    }
-    let result: Value = serde_json::from_str(text).unwrap();
+fn bash_result(result: &Value) -> String {
     let output = result["output"].as_str().unwrap();
     if result["truncated"].as_bool().unwrap() {
         format!(
@@ -104,22 +98,6 @@ fn bash_result(text: &str, is_error: bool) -> String {
         )
     } else {
         output.to_owned()
-    }
-}
-
-fn read_result(text: &str, is_error: bool) -> String {
-    if is_error {
-        text.to_owned()
-    } else {
-        serde_json::from_str::<String>(text).unwrap()
-    }
-}
-
-fn write_result(text: &str, is_error: bool) -> String {
-    if is_error {
-        text.to_owned()
-    } else {
-        serde_json::from_str(text).unwrap()
     }
 }
 

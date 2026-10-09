@@ -24,7 +24,7 @@ pub fn stream(
                     AssistantContent::ToolCall(call) => input.push(json!({"type":"function_call","call_id":call.id,"name":call.name,"arguments":serde_json::to_string(&call.arguments)?})),
                 }
             },
-            crate::core::Message::ToolResult(result) => input.push(json!({"type":"function_call_output","call_id":result.tool_call_id,"output":result.content.iter().filter_map(|block| match block { crate::core::ToolResultContent::Text(text) => Some(text.text.as_str()), _ => None }).collect::<Vec<_>>().join("\n")})),
+            crate::core::Message::ToolResult(result) => input.push(json!({"type":"function_call_output","call_id":result.tool_call_id,"output":result.content.iter().map(|block| match block { crate::core::ToolResultContent::Text(text) => text.text.clone(), crate::core::ToolResultContent::Json(value) => value.to_string(), crate::core::ToolResultContent::Image(image) => format!("[image: {}]", image.mime_type) }).collect::<Vec<_>>().join("\n")})),
         }
     }
     if let Some(prompt) = &context.system_prompt {
