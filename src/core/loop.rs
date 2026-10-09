@@ -136,6 +136,10 @@ impl Loop {
             let mut options = StreamOptions::default();
             options.reasoning = self.reasoning.clone();
             loop {
+                if self.ui.lock().unwrap().take_cancel() {
+                    self.ui.lock().unwrap().stop_working();
+                    break;
+                }
                 let events = self.provider.stream(
                     &self.model,
                     &self.context,
@@ -150,6 +154,7 @@ impl Loop {
                         _ => None,
                     })
                     .expect("Responses API returned no assistant message");
+                let cancelled = self.ui.lock().unwrap().take_cancel();
                 self.plugins
                     .lock()
                     .unwrap()
@@ -165,7 +170,12 @@ impl Loop {
                 let assistant_message = Message::Assistant(message.clone());
                 self.ui.lock().unwrap().append_message(&assistant_message);
                 self.context.messages.push(assistant_message);
-                for result in self.tools.run_tool_calls(message) {
+                let results = if cancelled {
+                    cancelled_tool_results(&message)
+                } else {
+                    self.tools.run_tool_calls(message)
+                };
+                for result in results {
                     let result = self.plugins.lock().unwrap().transform_tool_result(result)?;
                     self.events
                         .append(EventValue::ToolResult(serde_json::to_value(&result)?), true)?;
@@ -173,7 +183,7 @@ impl Loop {
                     self.ui.lock().unwrap().append_message(&result);
                     self.context.messages.push(result);
                 }
-                if !has_tool_calls {
+                if cancelled || !has_tool_calls {
                     self.ui.lock().unwrap().stop_working();
                     break;
                 }
@@ -215,4 +225,31 @@ fn is_command(input: &str) -> bool {
     input
         .strip_prefix('/')
         .is_some_and(|name| !name.is_empty() && name.bytes().all(|byte| byte.is_ascii_lowercase()))
+}
+
+fn cancelled_tool_results(
+    message: &crate::core::AssistantMessage,
+) -> Vec<crate::core::ToolResultMessage> {
+    message
+        .content
+        .iter()
+        .filter_map(|content| match content {
+            crate::core::AssistantContent::ToolCall(call) => Some(crate::core::ToolResultMessage {
+                tool_call_id: call.id.clone(),
+                tool_name: call.name.clone(),
+                content: vec![crate::core::ToolResultContent::Text(
+                    crate::core::TextContent {
+                        text: "Cancelled by user".to_owned(),
+                        text_signature: None,
+                    },
+                )],
+                details: None,
+                usage: None,
+                nested_calls: None,
+                is_error: true,
+                timestamp: crate::core::now_ms(),
+            }),
+            _ => None,
+        })
+        .collect()
 }

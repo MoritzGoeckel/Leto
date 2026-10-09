@@ -43,6 +43,9 @@ pub trait Ui: Send {
     fn ask_styled(&mut self, options: AskOptions) -> io::Result<String>;
     fn start_working(&mut self);
     fn stop_working(&mut self);
+    fn take_cancel(&mut self) -> bool {
+        false
+    }
     fn append_message_str(&mut self, note: &str);
     fn append_message_str_styled(&mut self, note: &str, options: StrOptions);
     fn append_message(&mut self, message: &Message);

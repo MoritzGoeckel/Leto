@@ -42,6 +42,7 @@ struct State {
     input_options: AskOptions,
     working_since: Option<Instant>,
     shutdown: bool,
+    cancelled: bool,
 }
 
 impl State {
@@ -208,10 +209,12 @@ impl Tui {
         }
         if key.code == KeyCode::Esc {
             let (lock, wake) = &*self.state;
-            lock.lock()
-                .unwrap()
-                .input_responses
-                .push_back(String::new());
+            let mut state = lock.lock().unwrap();
+            if state.working_since.is_some() {
+                state.cancelled = true;
+                return true;
+            }
+            state.input_responses.push_back(String::new());
             wake.notify_all();
             return true;
         }
@@ -321,6 +324,10 @@ impl Ui for Tui {
             .chain(state.input_responses.drain(..))
             .collect::<Vec<_>>()
             .join("\n"))
+    }
+
+    fn take_cancel(&mut self) -> bool {
+        std::mem::take(&mut self.state.0.lock().unwrap().cancelled)
     }
 
     fn start_working(&mut self) {
