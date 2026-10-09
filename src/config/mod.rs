@@ -1,4 +1,4 @@
-use crate::core::Model;
+use crate::core::{Model, ThinkingLevel};
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, fs, io, path::PathBuf};
 
@@ -6,6 +6,14 @@ use std::{collections::BTreeMap, fs, io, path::PathBuf};
 pub struct Config {
     path: PathBuf,
     data: Value,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelConfig {
+    pub provider: String,
+    pub model: String,
+    pub reasoning: Option<ThinkingLevel>,
 }
 
 impl Config {
@@ -65,6 +73,19 @@ impl Config {
             .as_object_mut()
             .expect("atlas.json must contain a JSON object");
         data.entry("provider").or_insert_with(|| json!({}))[name] = value;
+    }
+
+    pub fn model(&self) -> Option<ModelConfig> {
+        self.data
+            .get("model")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .expect("model config must be valid")
+    }
+
+    pub fn set_model(&mut self, model: ModelConfig) {
+        self.data["model"] = serde_json::to_value(model).expect("model config must serialize");
     }
 
     pub fn save(&self) -> io::Result<()> {

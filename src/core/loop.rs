@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 pub struct Loop {
     ui: Arc<Mutex<dyn Ui>>,
     plugins: Arc<Mutex<PluginManager>>,
+    config: crate::config::Config,
     provider: OpenAiChatGpt,
     model: crate::core::Model,
     tools: ToolRuntime,
@@ -43,12 +44,14 @@ impl Loop {
                 error => return Err(error.into()),
             }
         }
-        let model = provider
-            .get_models()
-            .into_values()
-            .next()
-            .expect("provider has no models");
-        let mut tools = ToolRuntime::new(Arc::clone(&ui), config, Arc::clone(&plugins));
+        let models = provider.get_models();
+        let model_config = config.model();
+        let model = model_config
+            .as_ref()
+            .map(|config| models[&config.model].clone())
+            .unwrap_or_else(|| models.into_values().next().expect("provider has no models"));
+        let mut tools =
+            ToolRuntime::new(Arc::clone(&ui), Arc::clone(&config), Arc::clone(&plugins));
         tools.add_tools(crate::core::tools::buildin::make_default_tools());
         let agents_md = Self::load_agents_md();
         if let Some((path, _)) = &agents_md {
@@ -59,13 +62,14 @@ impl Loop {
         let mut loop_state = Self {
             ui,
             plugins,
+            config: (*config).clone(),
             provider,
             model,
             tools,
             context: Context::default(),
             exit: false,
             commands: Self::make_commands(),
-            reasoning: None,
+            reasoning: model_config.and_then(|config| config.reasoning),
             events: EventLog::create()?,
         };
         loop_state.clear_command()?;
@@ -284,6 +288,12 @@ impl Loop {
         })?;
         if let Some(model) = models.into_iter().find(|model| model.name == answer) {
             self.model = model;
+            self.config.set_model(crate::config::ModelConfig {
+                provider: self.model.provider.clone(),
+                model: self.model.id.clone(),
+                reasoning: self.reasoning.clone(),
+            });
+            self.config.save()?;
             ui.append_message_str(&format!("Model has been changed to {}", self.model.name));
         } else {
             ui.append_message_str("Model not found");
@@ -315,6 +325,12 @@ impl Loop {
             .find(|(_, level)| **level == answer)
         {
             self.reasoning = Some(values[index].clone());
+            self.config.set_model(crate::config::ModelConfig {
+                provider: self.model.provider.clone(),
+                model: self.model.id.clone(),
+                reasoning: self.reasoning.clone(),
+            });
+            self.config.save()?;
             ui.append_message_str(&format!("Reasoning has been changed to {answer}"));
         } else {
             ui.append_message_str("Reasoning level not found");
