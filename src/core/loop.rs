@@ -46,6 +46,7 @@ impl Loop {
         }
         let models = provider.get_models();
         let model_config = config.model();
+        let configured = model_config.is_some();
         let model = model_config
             .as_ref()
             .map(|config| models[&config.model].clone())
@@ -59,6 +60,17 @@ impl Loop {
                 .unwrap()
                 .append_message_str(&format!("Loaded {}", path.display()));
         }
+        ui.lock().unwrap().append_message_str(&format!(
+            "Using {}model: {} {} {}",
+            if configured { "" } else { "default " },
+            model.provider,
+            model.id,
+            model_config
+                .as_ref()
+                .and_then(|config| config.reasoning.as_ref())
+                .map(|level| format!("{level:?}").to_lowercase())
+                .unwrap_or_else(|| "default".to_owned())
+        ));
         let mut loop_state = Self {
             ui,
             plugins,
