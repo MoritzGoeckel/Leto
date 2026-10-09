@@ -13,5 +13,3 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 - SSE parsing
 - Paste into input
 - Stop request
-- Input queue
-- Remove read/write/edit

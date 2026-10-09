@@ -9,9 +9,6 @@ use crate::core::{ToolCall, ToolResultContent, ToolResultMessage};
 pub(super) fn append_call(lines: &mut Vec<Line<'static>>, call: &ToolCall) {
     match call.name.as_str() {
         "bash" => bash_call(lines, &call.arguments),
-        "read" => read_call(lines, &call.arguments),
-        "write" => write_call(lines, &call.arguments),
-        "edit" => edit_call(lines, &call.arguments),
         _ => append_body(
             lines,
             &serde_json::to_string_pretty(&call.arguments).unwrap(),
@@ -25,10 +22,6 @@ pub(super) fn append_result(lines: &mut Vec<Line<'static>>, message: &ToolResult
         let body = match (message.tool_name.as_str(), content) {
             ("bash", ToolResultContent::Json(result)) => bash_result(result),
             ("bash", ToolResultContent::Text(text)) => text.text.clone(),
-            ("read", ToolResultContent::Text(text)) => text.text.clone(),
-            ("read", _) => panic!("read result must be text"),
-            ("write" | "edit", ToolResultContent::Text(text)) => text.text.clone(),
-            ("write" | "edit", _) => panic!("write/edit result must be text"),
             (_, ToolResultContent::Text(text)) => text.text.clone(),
             (_, ToolResultContent::Json(value)) => value.to_string(),
             (_, ToolResultContent::Image(image)) => format!("[image: {}]", image.mime_type),
@@ -48,45 +41,6 @@ fn bash_call(lines: &mut Vec<Line<'static>>, arguments: &serde_json::Map<String,
         &format!("BASH: {}", arguments["command"].as_str().unwrap()),
         Color::Cyan,
     );
-}
-
-fn read_call(lines: &mut Vec<Line<'static>>, arguments: &serde_json::Map<String, Value>) {
-    append_body(
-        lines,
-        &format!(
-            "READ: {} {}:{}",
-            arguments["file"].as_str().unwrap(),
-            arguments["offset"],
-            arguments["limit"]
-        ),
-        Color::Cyan,
-    );
-}
-
-fn write_call(lines: &mut Vec<Line<'static>>, arguments: &serde_json::Map<String, Value>) {
-    append_body(
-        lines,
-        &format!("WRITE: {}", arguments["file"].as_str().unwrap()),
-        Color::Cyan,
-    );
-    append_body(lines, arguments["content"].as_str().unwrap(), Color::Green);
-}
-
-fn edit_call(lines: &mut Vec<Line<'static>>, arguments: &serde_json::Map<String, Value>) {
-    lines.push(Line::styled("EDIT:", Style::default().fg(Color::Cyan)));
-    for edit in arguments["edits"].as_array().unwrap() {
-        for (parameter, prefix, color) in [
-            ("oldText", "- ", Color::Red),
-            ("newText", "+ ", Color::Green),
-        ] {
-            for line in edit[parameter].as_str().unwrap().split('\n') {
-                lines.push(Line::styled(
-                    format!("{prefix}{line}"),
-                    Style::default().fg(color),
-                ));
-            }
-        }
-    }
 }
 
 fn bash_result(result: &Value) -> String {

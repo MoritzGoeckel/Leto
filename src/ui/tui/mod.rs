@@ -250,12 +250,16 @@ fn resize_viewport(
     terminal.clear()
 }
 
-fn user_message_line(text: &str) -> Line<'static> {
-    Line::styled(
-        text.to_owned(),
-        Style::default().fg(Color::White).bg(INPUT_BACKGROUND),
-    )
-    .style(Style::default().fg(Color::White).bg(INPUT_BACKGROUND))
+fn user_message_lines(text: &str) -> Vec<Line<'static>> {
+    text.split('\n')
+        .map(|line| {
+            Line::styled(
+                line.to_owned(),
+                Style::default().fg(Color::White).bg(INPUT_BACKGROUND),
+            )
+            .style(Style::default().fg(Color::White).bg(INPUT_BACKGROUND))
+        })
+        .collect()
 }
 
 fn append_message_lines(lines: &mut Vec<Line<'static>>, message: &crate::core::Message) {
@@ -270,14 +274,15 @@ fn append_message_lines(lines: &mut Vec<Line<'static>>, message: &crate::core::M
             }
         },
         Message::User(message) => match &message.content {
-            UserContent::Text(text) => lines.push(user_message_line(text)),
+            UserContent::Text(text) => lines.extend(user_message_lines(text)),
             UserContent::Blocks(blocks) => {
                 for block in blocks {
                     match block {
-                        UserContentBlock::Text(text) => lines.push(user_message_line(&text.text)),
-                        UserContentBlock::Image(image) => {
-                            lines.push(user_message_line(&format!("[image: {}]", image.mime_type)))
+                        UserContentBlock::Text(text) => {
+                            lines.extend(user_message_lines(&text.text))
                         }
+                        UserContentBlock::Image(image) => lines
+                            .extend(user_message_lines(&format!("[image: {}]", image.mime_type))),
                     }
                 }
             }
@@ -311,7 +316,11 @@ impl Ui for Tui {
         if state.shutdown {
             return Err(io::Error::from(io::ErrorKind::Interrupted));
         }
-        Ok(state.input_responses.pop_front().unwrap())
+        let input = state.input_responses.pop_front().unwrap();
+        Ok(std::iter::once(input)
+            .chain(state.input_responses.drain(..))
+            .collect::<Vec<_>>()
+            .join("\n"))
     }
 
     fn start_working(&mut self) {
