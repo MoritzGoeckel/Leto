@@ -17,12 +17,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ask_ui.lock().unwrap().wait_for_next_prompt()?
         ))
     });
-    let notify_ui = Arc::clone(&ui);
-    plugins.register_method("notify_user", move |params: serde_json::Value| {
-        let message = params["message"].as_str().unwrap_or_default();
-        notify_ui.lock().unwrap().inform("Notice", message);
-        Ok(serde_json::Value::Null)
-    });
     plugins.start(&config)?;
     // let resume = std::env::args().any(|argument| argument == "--resume");
     // let context = resume

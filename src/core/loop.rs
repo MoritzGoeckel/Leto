@@ -47,31 +47,18 @@ impl Loop {
                 .unwrap()
                 .note(&format!("Loaded {}", path.display()));
         }
-        let context = Context {
-            system_prompt: agents_md.map(|(_, content)| content),
-            tools: Some(
-                tools
-                    .tools
-                    .values()
-                    .map(|tool| tool.definition.clone())
-                    .collect(),
-            ),
-            ..Context::default()
-        };
-        let mut events = EventLog::create()?;
-        if let Some(system_prompt) = &context.system_prompt {
-            events.append(EventValue::SystemPrompt(system_prompt.clone()), false)?;
-        }
-        Ok(Self {
+        let mut loop_state = Self {
             ui,
             plugins,
             provider,
             tools,
-            context,
+            context: Context::default(),
             exit: false,
             commands: Self::make_commands(),
-            events,
-        })
+            events: EventLog::create()?,
+        };
+        loop_state.clear_command()?;
+        Ok(loop_state)
     }
 
     pub fn start(mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -84,13 +71,8 @@ impl Loop {
             .next()
             .expect("provider has no models");
         self.plugins.lock().unwrap().notify_new_conversation()?;
-        self.ui
-            .lock()
-            .unwrap()
-            .inform("Signed in", "Enter a message, or /exit to quit.");
         while !self.exit {
             let input = self.ui.lock().unwrap().wait_for_next_prompt()?;
-            self.ui.lock().unwrap().clear_notifications();
             if is_command(&input) {
                 self.ui.lock().unwrap().on_command(&input);
                 self.events
@@ -198,7 +180,7 @@ impl Loop {
                 self.ui
                     .lock()
                     .unwrap()
-                    .inform("Unknown command", &format!("/{name}"));
+                    .note(&format!("Unknown command: /{name}"));
                 Ok(())
             }
         }
@@ -217,13 +199,28 @@ impl Loop {
             .map(|path| path.file_name().unwrap().to_string_lossy())
             .collect::<Vec<_>>();
         self.ui.lock().unwrap().note(&format!(
-            conversations.join("\n"),
-            "/resume <conversation>.jsonl"
+            "{}\n/resume <conversation>.jsonl",
+            conversations.join("\n")
         ));
         Ok(())
     }
     fn clear_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.context.messages.clear();
+        let agents_md = Self::load_agents_md();
+        self.context = Context {
+            system_prompt: agents_md.map(|(_, content)| content),
+            tools: Some(
+                self.tools
+                    .tools
+                    .values()
+                    .map(|tool| tool.definition.clone())
+                    .collect(),
+            ),
+            ..Context::default()
+        };
+        if let Some(system_prompt) = &self.context.system_prompt {
+            self.events
+                .append(EventValue::SystemPrompt(system_prompt.clone()), false)?;
+        }
         Ok(())
     }
 }

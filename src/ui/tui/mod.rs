@@ -17,8 +17,8 @@ use crossterm::{
 use ratatui::{
     Terminal, TerminalOptions, Viewport,
     backend::CrosstermBackend,
-    layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    layout::{Constraint, Layout},
+    style::{Color, Style},
     text::{Line, Span},
     widgets::{Paragraph, Widget, Wrap},
 };
@@ -38,7 +38,6 @@ pub struct Tui {
 struct State {
     pending_lines: Vec<Line<'static>>,
     input_responses: VecDeque<String>,
-    notifications: Vec<(String, String)>,
     working_since: Option<Instant>,
     shutdown: bool,
 }
@@ -102,12 +101,11 @@ impl Tui {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         history_has_content: &mut bool,
     ) -> io::Result<bool> {
-        let (pending_lines, shutdown, notifications, working_since) = {
+        let (pending_lines, shutdown, working_since) = {
             let mut state = self.state.0.lock().unwrap();
             (
                 std::mem::take(&mut state.pending_lines),
                 state.shutdown,
-                state.notifications.clone(),
                 state.working_since,
             )
         };
@@ -126,13 +124,9 @@ impl Tui {
         let input_height = input_lines
             .len()
             .min(size.height.saturating_sub(4) as usize) as u16;
-        let notification_height =
-            notifications.len() + usize::from(*history_has_content && !notifications.is_empty());
-        let working_separator_height =
-            u16::from(working && (*history_has_content || !notifications.is_empty()));
+        let working_separator_height = u16::from(working && *history_has_content);
         let working_height = u16::from(working);
-        let viewport_height = (notification_height
-            + input_height as usize
+        let viewport_height = (input_height as usize
             + 4
             + working_separator_height as usize
             + working_height as usize)
@@ -158,7 +152,6 @@ impl Tui {
                 Constraint::Length(1),
             ])
             .split(area);
-            render_notifications(frame, chunks[0], &notifications, *history_has_content);
             if let Some(started) = working_since {
                 let spinner =
                     ['/', '-', '\\', '|'][(started.elapsed().as_millis() / 150 % 4) as usize];
@@ -245,29 +238,6 @@ fn resize_viewport(
     terminal.clear()
 }
 
-fn render_notifications(
-    frame: &mut ratatui::Frame<'_>,
-    area: Rect,
-    notifications: &[(String, String)],
-    history_has_content: bool,
-) {
-    let mut lines: Vec<_> = notifications
-        .iter()
-        .map(|(title, notice)| {
-            Line::from(Span::styled(
-                format!("{title}: {notice}"),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ))
-        })
-        .collect();
-    if history_has_content && !lines.is_empty() {
-        lines.insert(0, Line::default());
-    }
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
-}
-
 fn user_message_line(text: &str) -> Line<'static> {
     Line::styled(
         text.to_owned(),
@@ -331,23 +301,12 @@ impl Ui for Tui {
         })
     }
 
-    fn clear_notifications(&mut self) {
-        self.state.0.lock().unwrap().notifications.clear();
-    }
-
     fn start_working(&mut self) {
         self.state.0.lock().unwrap().working_since = Some(Instant::now());
     }
 
     fn stop_working(&mut self) {
         self.state.0.lock().unwrap().working_since = None;
-    }
-
-    fn inform(&mut self, title: &str, message: &str) {
-        let mut state = self.state.0.lock().unwrap();
-        state
-            .notifications
-            .push((title.to_owned(), message.to_owned()));
     }
 
     fn note(&mut self, note: &str) {
