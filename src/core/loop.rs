@@ -23,6 +23,7 @@ pub struct Loop {
     context: Context,
     exit: bool,
     commands: HashMap<String, fn(&mut Self) -> Result<(), Box<dyn std::error::Error>>>,
+    reasoning: Option<crate::core::ThinkingLevel>,
     events: EventLog,
 }
 
@@ -64,6 +65,7 @@ impl Loop {
             context: Context::default(),
             exit: false,
             commands: Self::make_commands(),
+            reasoning: None,
             events: EventLog::create()?,
         };
         loop_state.clear_command()?;
@@ -116,10 +118,10 @@ impl Loop {
             self.ui.lock().unwrap().append_message(&user_message);
             self.context.messages.push(user_message);
             self.ui.lock().unwrap().start_working();
+            let mut options = StreamOptions::default();
+            options.reasoning = self.reasoning.clone();
             loop {
-                let events =
-                    self.provider
-                        .stream(&self.model, &self.context, &StreamOptions::default())?;
+                let events = self.provider.stream(&self.model, &self.context, &options)?;
                 let message = events
                     .into_iter()
                     .find_map(|event| match event {
@@ -167,6 +169,7 @@ impl Loop {
             ("clear".to_owned(), Self::clear_command as _),
             ("resume".to_owned(), Self::resume_command as _),
             ("model".to_owned(), Self::model_command as _),
+            ("reasoning".to_owned(), Self::reasoning_command as _),
         ])
     }
 
@@ -284,6 +287,37 @@ impl Loop {
             ui.append_message_str(&format!("Model has been changed to {}", self.model.name));
         } else {
             ui.append_message_str("Model not found");
+        }
+        Ok(())
+    }
+
+    fn reasoning_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+        let values = [
+            crate::core::ThinkingLevel::Off,
+            crate::core::ThinkingLevel::Minimal,
+            crate::core::ThinkingLevel::Low,
+            crate::core::ThinkingLevel::Medium,
+            crate::core::ThinkingLevel::High,
+            crate::core::ThinkingLevel::Xhigh,
+            crate::core::ThinkingLevel::Max,
+        ];
+        let mut ui = self.ui.lock().unwrap();
+        ui.append_message_str(&levels.join("\n"));
+        let answer = ui.ask(AskOptions {
+            background: Color::Rgb(45, 39, 26),
+            form_text: "Reasoning level...".to_owned(),
+            ..AskOptions::default()
+        })?;
+        if let Some((index, _)) = levels
+            .iter()
+            .enumerate()
+            .find(|(_, level)| **level == answer)
+        {
+            self.reasoning = Some(values[index].clone());
+            ui.append_message_str(&format!("Reasoning has been changed to {answer}"));
+        } else {
+            ui.append_message_str("Reasoning level not found");
         }
         Ok(())
     }

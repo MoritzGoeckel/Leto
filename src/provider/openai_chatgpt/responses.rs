@@ -32,7 +32,16 @@ pub fn stream(
     }
     let mut body = json!({"model":model.id,"input":input,"stream":true,"store":false});
     if model.reasoning {
-        body["reasoning"] = json!({"effort":"none"});
+        let effort = match options.reasoning {
+            Some(crate::core::ThinkingLevel::Minimal) | Some(crate::core::ThinkingLevel::Low) => {
+                "low"
+            }
+            Some(crate::core::ThinkingLevel::High) => "high",
+            Some(crate::core::ThinkingLevel::Xhigh) => "xhigh",
+            Some(crate::core::ThinkingLevel::Max) => "max",
+            _ => "medium",
+        };
+        body["reasoning"] = json!({"effort":effort});
     }
     if !token.starts_with("sk-") { /* ChatGPT OAuth rejects tuning and cache fields. */
     } else {
