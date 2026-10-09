@@ -173,6 +173,7 @@ impl Loop {
         HashMap::from([
             ("exit".to_owned(), Self::exit_command as _),
             ("clear".to_owned(), Self::clear_command as _),
+            ("resume".to_owned(), Self::resume_command as _),
         ])
     }
 
@@ -204,6 +205,21 @@ impl Loop {
     }
     fn exit_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.exit = true;
+        Ok(())
+    }
+    fn resume_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let conversations = crate::core::events::list_conversations()?;
+        let conversations = conversations
+            .iter()
+            .rev()
+            .take(10)
+            .rev()
+            .map(|path| path.file_name().unwrap().to_string_lossy())
+            .collect::<Vec<_>>();
+        self.ui.lock().unwrap().note(&format!(
+            conversations.join("\n"),
+            "/resume <conversation>.jsonl"
+        ));
         Ok(())
     }
     fn clear_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {

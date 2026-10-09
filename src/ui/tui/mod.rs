@@ -356,7 +356,7 @@ impl Ui for Tui {
             .lock()
             .unwrap()
             .pending_lines
-            .push(Line::from(note.to_owned()));
+            .extend(note.lines().map(|line| Line::from(line.to_owned())));
     }
 
     fn on_message(&mut self, message: &crate::core::Message) {

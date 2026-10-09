@@ -9,9 +9,11 @@ pub fn list_conversations() -> std::io::Result<Vec<PathBuf>> {
     if !directory.exists() {
         return Ok(Vec::new());
     }
-    Ok(fs::read_dir(directory)?
+    let mut conversations = fs::read_dir(directory)?
         .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<Result<Vec<_>, _>>()?)
+        .collect::<Result<Vec<_>, _>>()?;
+    conversations.sort_by_key(|path| fs::metadata(path).unwrap().modified().unwrap());
+    Ok(conversations)
 }
 
 #[derive(Serialize)]
