@@ -43,6 +43,7 @@ struct State {
     working_since: Option<Instant>,
     shutdown: bool,
     cancelled: bool,
+    alert: Option<String>,
 }
 
 impl State {
@@ -67,6 +68,9 @@ impl Tui {
             let (lock, wake) = &*submit_state;
             let mut state = lock.lock().unwrap();
             state.input_responses.push_back(text.to_owned());
+            if state.working_since.is_some() {
+                state.alert = Some(format!("Queueing prompts: {}", state.input_responses.len()));
+            }
             wake.notify_all();
         });
         Self {
@@ -110,7 +114,7 @@ impl Tui {
     }
 
     fn tick(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<bool> {
-        let (pending_lines, shutdown, working_since, input_options, history_has_content) = {
+        let (pending_lines, shutdown, working_since, input_options, history_has_content, alert) = {
             let mut state = self.state.0.lock().unwrap();
             (
                 std::mem::take(&mut state.pending_lines),
@@ -118,6 +122,7 @@ impl Tui {
                 state.working_since,
                 state.input_options.clone(),
                 state.history_has_content,
+                state.alert.clone(),
             )
         };
         let working = working_since.is_some();
@@ -158,6 +163,12 @@ impl Tui {
                 Constraint::Length(1),
             ])
             .split(area);
+            if let Some(alert) = &alert {
+                frame.render_widget(
+                    Paragraph::new(format!("  {alert}")).style(Style::default().fg(Color::Yellow)),
+                    chunks[7],
+                );
+            }
             if let Some(started) = working_since {
                 let spinner =
                     ['/', '-', '\\', '|'][(started.elapsed().as_millis() / 150 % 4) as usize];
@@ -190,10 +201,9 @@ impl Tui {
         if event::poll(Duration::from_millis(50))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    if self.handle_key_pressed(key) {
-                        return Ok(true);
+                    if !self.handle_key_pressed(key) {
+                        self.text_input.lock().unwrap().handle_key_event(key);
                     }
-                    self.text_input.lock().unwrap().handle_key_event(key);
                 }
                 Event::Paste(text) => self.text_input.lock().unwrap().insert_text(&text),
                 _ => {}
@@ -208,14 +218,12 @@ impl Tui {
             return true;
         }
         if key.code == KeyCode::Esc {
-            let (lock, wake) = &*self.state;
-            let mut state = lock.lock().unwrap();
+            let mut state = self.state.0.lock().unwrap();
             if state.working_since.is_some() {
                 state.cancelled = true;
+                state.alert = Some("Stopping...".to_owned());
                 return true;
             }
-            state.input_responses.push_back(String::new());
-            wake.notify_all();
             return true;
         }
         false
@@ -320,6 +328,7 @@ impl Ui for Tui {
             return Err(io::Error::from(io::ErrorKind::Interrupted));
         }
         let input = state.input_responses.pop_front().unwrap();
+        state.alert = None;
         Ok(std::iter::once(input)
             .chain(state.input_responses.drain(..))
             .collect::<Vec<_>>()
@@ -331,11 +340,22 @@ impl Ui for Tui {
     }
 
     fn start_working(&mut self) {
-        self.state.0.lock().unwrap().working_since = Some(Instant::now());
+        let mut state = self.state.0.lock().unwrap();
+        state.working_since = Some(Instant::now());
     }
 
     fn stop_working(&mut self) {
-        self.state.0.lock().unwrap().working_since = None;
+        let mut state = self.state.0.lock().unwrap();
+        state.working_since = None;
+        state.alert = None;
+    }
+
+    fn set_alert(&mut self, message: &str) {
+        self.state.0.lock().unwrap().alert = Some(message.to_owned());
+    }
+
+    fn clear_alert(&mut self) {
+        self.state.0.lock().unwrap().alert = None;
     }
 
     fn append_message_str(&mut self, note: &str) {
