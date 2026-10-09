@@ -4,9 +4,7 @@ mod responses;
 
 use crate::{
     config::Config,
-    core::{
-        AssistantMessageEvent, Context, InputModality, Model, ModelCost, StreamOptions, now_ms,
-    },
+    core::{AssistantMessageEvent, Context, Model, StreamOptions, now_ms},
     provider::{AuthError, Provider},
     ui::Ui,
 };
@@ -19,6 +17,7 @@ pub use responses::stream;
 pub struct OpenAiChatGpt {
     config: Config,
     credential: Option<Credential>,
+    models: BTreeMap<String, Model>,
 }
 
 impl OpenAiChatGpt {
@@ -28,7 +27,12 @@ impl OpenAiChatGpt {
             .cloned()
             .map(serde_json::from_value)
             .transpose()?;
-        Ok(Self { config, credential })
+        let models = config.models("openai")?;
+        Ok(Self {
+            config,
+            credential,
+            models,
+        })
     }
 }
 
@@ -83,25 +87,6 @@ impl Provider for OpenAiChatGpt {
     }
 
     fn get_models(&self) -> BTreeMap<String, Model> {
-        let model = Model {
-            id: "gpt-6-luna".into(),
-            name: "GPT-6 Luna".into(),
-            api: "openai-responses".into(),
-            provider: "openai".into(),
-            base_url: "https://api.openai.com/v1".into(),
-            input: vec![InputModality::Text, InputModality::Image],
-            input_limits: None,
-            cost: ModelCost::default(),
-            model_type: None,
-            reasoning: true,
-            thinking_level_map: None,
-            prompt_cache: None,
-            context_window: 272_000,
-            max_tokens: 128_000,
-            headers: None,
-            sampling_params: None,
-            compat: None,
-        };
-        BTreeMap::from([(model.name.clone(), model)])
+        self.models.clone()
     }
 }

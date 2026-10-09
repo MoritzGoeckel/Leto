@@ -18,6 +18,7 @@ pub struct Loop {
     ui: Arc<Mutex<dyn Ui>>,
     plugins: Arc<Mutex<PluginManager>>,
     provider: OpenAiChatGpt,
+    model: crate::core::Model,
     tools: ToolRuntime,
     context: Context,
     exit: bool,
@@ -41,6 +42,11 @@ impl Loop {
                 error => return Err(error.into()),
             }
         }
+        let model = provider
+            .get_models()
+            .into_values()
+            .next()
+            .expect("provider has no models");
         let mut tools = ToolRuntime::new(Arc::clone(&ui), config, Arc::clone(&plugins));
         tools.add_tools(crate::core::tools::buildin::make_default_tools());
         let agents_md = Self::load_agents_md();
@@ -53,6 +59,7 @@ impl Loop {
             ui,
             plugins,
             provider,
+            model,
             tools,
             context: Context::default(),
             exit: false,
@@ -66,12 +73,6 @@ impl Loop {
     pub fn start(mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.plugins.lock().unwrap().init_plugins()?;
         self.plugins.lock().unwrap().notify_init()?;
-        let model = self
-            .provider
-            .get_models()
-            .into_values()
-            .next()
-            .expect("provider has no models");
         self.plugins.lock().unwrap().notify_new_conversation()?;
         while !self.exit {
             let input = match self.ui.lock().unwrap().ask(AskOptions {
@@ -118,7 +119,7 @@ impl Loop {
             loop {
                 let events =
                     self.provider
-                        .stream(&model, &self.context, &StreamOptions::default())?;
+                        .stream(&self.model, &self.context, &StreamOptions::default())?;
                 let message = events
                     .into_iter()
                     .find_map(|event| match event {
@@ -165,6 +166,7 @@ impl Loop {
             ("exit".to_owned(), Self::exit_command as _),
             ("clear".to_owned(), Self::clear_command as _),
             ("resume".to_owned(), Self::resume_command as _),
+            ("model".to_owned(), Self::model_command as _),
         ])
     }
 
@@ -260,6 +262,28 @@ impl Loop {
         }
         for message in self.context.messages.iter().skip(earlier_messages) {
             ui.append_message(message);
+        }
+        Ok(())
+    }
+
+    fn model_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let models = self.provider.get_models().into_values().collect::<Vec<_>>();
+        let names = models
+            .iter()
+            .map(|model| model.name.as_str())
+            .collect::<Vec<_>>();
+        let mut ui = self.ui.lock().unwrap();
+        ui.append_message_str(&names.join("\n"));
+        let answer = ui.ask(AskOptions {
+            background: Color::Rgb(45, 39, 26),
+            form_text: "Model name...".to_owned(),
+            ..AskOptions::default()
+        })?;
+        if let Some(model) = models.into_iter().find(|model| model.name == answer) {
+            self.model = model;
+            ui.append_message_str(&format!("Model has been changed to {}", self.model.name));
+        } else {
+            ui.append_message_str("Model not found");
         }
         Ok(())
     }

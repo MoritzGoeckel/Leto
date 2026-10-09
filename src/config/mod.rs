@@ -1,5 +1,6 @@
+use crate::core::Model;
 use serde_json::{Value, json};
-use std::{fs, io, path::PathBuf};
+use std::{collections::BTreeMap, fs, io, path::PathBuf};
 
 #[derive(Clone)]
 pub struct Config {
@@ -37,6 +38,21 @@ impl Config {
                 })
             })
             .collect()
+    }
+
+    pub fn models(&self, provider: &str) -> io::Result<BTreeMap<String, Model>> {
+        let path = self.path.parent().unwrap().join(
+            self.data["models"]
+                .as_str()
+                .expect("atlas.json must contain a models path"),
+        );
+        let models: BTreeMap<String, BTreeMap<String, Model>> =
+            serde_json::from_slice(&fs::read(path)?)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        Ok(models[provider]
+            .iter()
+            .map(|(id, model)| (id.clone(), model.clone()))
+            .collect())
     }
 
     pub fn provider(&self, name: &str) -> Option<&Value> {
