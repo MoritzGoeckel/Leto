@@ -26,11 +26,25 @@ impl Default for AskOptions {
     }
 }
 
+#[derive(Clone)]
+pub struct StrOptions {
+    pub background: Color,
+    pub foreground: Color,
+}
+
+impl StrOptions {
+    pub const ERROR: Self = Self {
+        background: Color::Reset,
+        foreground: Color::Red,
+    };
+}
+
 pub trait Ui: Send {
-    fn ask(&mut self, options: AskOptions) -> io::Result<String>;
+    fn ask_styled(&mut self, options: AskOptions) -> io::Result<String>;
     fn start_working(&mut self);
     fn stop_working(&mut self);
     fn append_message_str(&mut self, note: &str);
+    fn append_message_str_styled(&mut self, note: &str, options: StrOptions);
     fn append_message(&mut self, message: &Message);
     fn append_command(&mut self, command: &str);
 }

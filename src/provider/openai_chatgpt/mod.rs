@@ -73,6 +73,7 @@ impl Provider for OpenAiChatGpt {
         model: &Model,
         context: &Context,
         options: &StreamOptions,
+        ui: &mut dyn Ui,
     ) -> Result<Vec<AssistantMessageEvent>, Box<dyn std::error::Error>> {
         responses::stream(
             &self
@@ -83,6 +84,7 @@ impl Provider for OpenAiChatGpt {
             model,
             context,
             options,
+            ui,
         )
     }
 

@@ -23,7 +23,7 @@ use ratatui::{
     widgets::{Paragraph, Widget, Wrap},
 };
 
-use super::{AskOptions, INPUT_BACKGROUND, Ui};
+use super::{AskOptions, INPUT_BACKGROUND, StrOptions, Ui};
 mod text_input;
 mod tools;
 use text_input::{INPUT_PADDING, TextInput, render_input};
@@ -300,7 +300,7 @@ fn append_message_lines(lines: &mut Vec<Line<'static>>, message: &crate::core::M
 }
 
 impl Ui for Tui {
-    fn ask(&mut self, options: AskOptions) -> io::Result<String> {
+    fn ask_styled(&mut self, options: AskOptions) -> io::Result<String> {
         let (lock, wake) = &*self.state;
         let mut state = lock.lock().unwrap();
         state.input_options = options;
@@ -323,9 +323,26 @@ impl Ui for Tui {
     }
 
     fn append_message_str(&mut self, note: &str) {
+        self.append_message_str_styled(
+            note,
+            StrOptions {
+                background: Color::Reset,
+                foreground: Color::Reset,
+            },
+        );
+    }
+
+    fn append_message_str_styled(&mut self, note: &str, options: StrOptions) {
         self.state.0.lock().unwrap().append_lines(
             note.lines()
-                .map(|line| Line::from(line.to_owned()))
+                .map(|line| {
+                    Line::styled(
+                        line.to_owned(),
+                        Style::default()
+                            .fg(options.foreground)
+                            .bg(options.background),
+                    )
+                })
                 .collect(),
         );
     }

@@ -93,7 +93,7 @@ impl Loop {
         self.plugins.lock().unwrap().notify_init()?;
         self.plugins.lock().unwrap().notify_new_conversation()?;
         while !self.exit {
-            let input = match self.ui.lock().unwrap().ask(AskOptions {
+            let input = match self.ui.lock().unwrap().ask_styled(AskOptions {
                 form_text: "instructions...".to_owned(),
                 ..AskOptions::default()
             }) {
@@ -137,7 +137,12 @@ impl Loop {
             let mut options = StreamOptions::default();
             options.reasoning = self.reasoning.clone();
             loop {
-                let events = self.provider.stream(&self.model, &self.context, &options)?;
+                let events = self.provider.stream(
+                    &self.model,
+                    &self.context,
+                    &options,
+                    &mut *self.ui.lock().unwrap(),
+                )?;
                 let message = events
                     .into_iter()
                     .find_map(|event| match event {
@@ -241,7 +246,7 @@ impl Loop {
         let (answer, mut context, events) = loop {
             let mut ui = self.ui.lock().unwrap();
             ui.append_message_str(&format!("{}", names.join("\n")));
-            let answer = ui.ask(AskOptions {
+            let answer = ui.ask_styled(AskOptions {
                 background: Color::Rgb(45, 39, 26),
                 form_text: "Conversation filename...".to_owned(),
                 ..AskOptions::default()
@@ -293,7 +298,7 @@ impl Loop {
             .collect::<Vec<_>>();
         let mut ui = self.ui.lock().unwrap();
         ui.append_message_str(&names.join("\n"));
-        let answer = ui.ask(AskOptions {
+        let answer = ui.ask_styled(AskOptions {
             background: Color::Rgb(45, 39, 26),
             form_text: "Model name...".to_owned(),
             ..AskOptions::default()
@@ -326,7 +331,7 @@ impl Loop {
         ];
         let mut ui = self.ui.lock().unwrap();
         ui.append_message_str(&levels.join("\n"));
-        let answer = ui.ask(AskOptions {
+        let answer = ui.ask_styled(AskOptions {
             background: Color::Rgb(45, 39, 26),
             form_text: "Reasoning level...".to_owned(),
             ..AskOptions::default()

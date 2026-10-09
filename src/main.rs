@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     plugins.register_method("ask_user", move |params: serde_json::Value| {
         let mut ui = ask_ui.lock().unwrap();
         ui.append_message_str(params["message"].as_str().unwrap());
-        Ok(serde_json::json!(ui.ask(ui::AskOptions {
+        Ok(serde_json::json!(ui.ask_styled(ui::AskOptions {
             background: ratatui::style::Color::Rgb(45, 39, 26),
             form_text: "Answer here...".to_owned(),
             ..ui::AskOptions::default()

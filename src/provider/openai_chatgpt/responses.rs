@@ -1,6 +1,9 @@
-use crate::core::{
-    AssistantContent, AssistantMessage, CompletionReason, Context, Model, StopReason,
-    StreamOptions, TextContent, ThinkingContent, ToolCall, Usage, now_ms,
+use crate::{
+    core::{
+        AssistantContent, AssistantMessage, CompletionReason, Context, Model, StopReason,
+        StreamOptions, TextContent, ThinkingContent, ToolCall, Usage, now_ms,
+    },
+    ui::{StrOptions, Ui},
 };
 use reqwest::blocking::Client;
 use serde_json::{Value, json};
@@ -11,6 +14,7 @@ pub fn stream(
     model: &Model,
     context: &Context,
     options: &StreamOptions,
+    ui: &mut dyn Ui,
 ) -> Result<Vec<crate::core::AssistantMessageEvent>, Box<dyn std::error::Error>> {
     let mut input = Vec::new();
     for message in &context.messages {
@@ -61,23 +65,28 @@ pub fn stream(
         }
     }
     let timeout = Duration::from_millis(options.timeout_ms.unwrap_or(300_000));
-    let response = Client::builder()
-        .timeout(timeout)
-        .build()?
-        .post(format!(
-            "{}/responses",
-            model.base_url.trim_end_matches('/')
-        ))
-        .bearer_auth(token)
-        .header("user-agent", "orpheus (rust)")
-        .header("accept", "text/event-stream")
-        .json(&body)
-        .send()?;
-    let status = response.status();
-    // TODO: Parse SSE incrementally; use /root/repos/pi/packages/ai/src/api/openai-responses-shared.ts as the reference.
-    let data = response.text()?;
-    if !status.is_success() {
-        return Err(format!("OpenAI Responses API returned {status}: {data}").into());
+    let mut response = None;
+    for attempt in 0..4 {
+        match send_request(token, model, &body, timeout) {
+            Ok(result) => {
+                response = Some(result);
+                break;
+            }
+            Err(error) => {
+                ui.append_message_str_styled(
+                    &format!("Request failed: {error}"),
+                    StrOptions::ERROR,
+                );
+                if attempt == 3 {
+                    return Err(error);
+                }
+                std::thread::sleep(Duration::from_secs(5));
+            }
+        }
+    }
+    let (success, data) = response.unwrap();
+    if !success {
+        return Err(data.into());
     }
     let mut text = String::new();
     let mut thinking = String::new();
@@ -169,6 +178,31 @@ pub fn stream(
     ])
 }
 
+fn send_request(
+    token: &str,
+    model: &Model,
+    body: &Value,
+    timeout: Duration,
+) -> Result<(bool, String), Box<dyn std::error::Error>> {
+    let response = Client::builder()
+        .timeout(timeout)
+        .build()?
+        .post(format!(
+            "{}/responses",
+            model.base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .header("user-agent", "orpheus (rust)")
+        .header("accept", "text/event-stream")
+        .json(body)
+        .send()?;
+    let status = response.status();
+    let data = response.text()?;
+    if !status.is_success() {
+        return Err(format!("OpenAI Responses API returned {status}: {data}").into());
+    }
+    Ok((true, data))
+}
 fn system_text(content: &crate::core::SystemContent) -> String {
     match content {
         crate::core::SystemContent::Text(text) => text.clone(),

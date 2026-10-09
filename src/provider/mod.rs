@@ -31,6 +31,7 @@ pub trait Provider {
         model: &Model,
         context: &Context,
         options: &StreamOptions,
+        ui: &mut dyn Ui,
     ) -> Result<Vec<AssistantMessageEvent>, Box<dyn std::error::Error>>;
     fn get_models(&self) -> BTreeMap<String, Model>;
 }
