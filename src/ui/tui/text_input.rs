@@ -7,6 +7,7 @@ use ratatui::{
 };
 
 pub(super) const INPUT_BACKGROUND: Color = Color::Rgb(30, 30, 30);
+pub(super) const ASK_BACKGROUND: Color = Color::Rgb(45, 39, 26);
 pub(super) const INPUT_PADDING: u16 = 2;
 
 pub struct TextInput {
@@ -24,7 +25,10 @@ impl TextInput {
         }
     }
 
-    pub fn wrapped_lines(&self, width: usize) -> (Vec<Line<'static>>, usize, usize) {
+    pub fn wrapped_lines(&self, width: usize, asking: bool) -> (Vec<Line<'static>>, usize, usize) {
+        if asking && self.text.is_empty() {
+            return (vec![Line::styled("Answer here...", Color::DarkGray)], 0, 0);
+        }
         let mut lines = vec![String::new()];
         let mut column = 0;
         let mut offset = 0;
@@ -187,16 +191,22 @@ pub(super) fn render_input(
     lines: Vec<Line<'static>>,
     cursor_column: usize,
     cursor_row: usize,
+    asking: bool,
 ) {
+    let background = if asking {
+        ASK_BACKGROUND
+    } else {
+        INPUT_BACKGROUND
+    };
     let block = Block::default()
         .padding(Padding::horizontal(INPUT_PADDING))
-        .style(Style::default().bg(INPUT_BACKGROUND));
+        .style(Style::default().bg(background));
     let content_area = block.inner(area);
     let scroll = (cursor_row + 1).saturating_sub(area.height as usize);
     let input = Paragraph::new(lines)
         .scroll((scroll as u16, 0))
         .block(block)
-        .style(Style::default().bg(INPUT_BACKGROUND).fg(Color::White));
+        .style(Style::default().bg(background).fg(Color::White));
     frame.render_widget(input, area);
     frame.set_cursor_position((
         content_area.x + cursor_column as u16,

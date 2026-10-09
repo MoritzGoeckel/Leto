@@ -10,6 +10,7 @@ use crate::{
 };
 use std::collections::HashMap;
 use std::fs;
+use std::io;
 use std::sync::{Arc, Mutex};
 
 pub struct Loop {
@@ -190,18 +191,62 @@ impl Loop {
         Ok(())
     }
     fn resume_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let conversations = crate::core::events::list_conversations()?;
-        let conversations = conversations
-            .iter()
+        let conversations = crate::core::events::list_conversations()?
+            .into_iter()
             .rev()
             .take(10)
-            .rev()
+            .collect::<Vec<_>>();
+        if conversations.is_empty() {
+            self.ui
+                .lock()
+                .unwrap()
+                .append_message_str("No saved conversations");
+            return Ok(());
+        }
+        let names = conversations
+            .iter()
             .map(|path| path.file_name().unwrap().to_string_lossy())
             .collect::<Vec<_>>();
-        self.ui.lock().unwrap().append_message_str(&format!(
-            "{}\n/resume <conversation>.jsonl",
-            conversations.join("\n")
-        ));
+        let (answer, mut context, events) = loop {
+            let answer = self.ui.lock().unwrap().ask(&format!(
+                "Saved conversations:\n{}\nEnter a conversation filename:",
+                names.join("\n")
+            ))?;
+            let Some(path) = conversations
+                .iter()
+                .find(|path| path.file_name().unwrap().to_str().unwrap() == answer)
+            else {
+                self.ui
+                    .lock()
+                    .unwrap()
+                    .append_message_str("Conversation not found");
+                continue;
+            };
+            let loaded = EventLog::read_context(path)
+                .and_then(|context| EventLog::open(path).map(|events| (context, events)));
+            match loaded {
+                Ok((context, events)) => break (answer, context, events),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    self.ui
+                        .lock()
+                        .unwrap()
+                        .append_message_str("Conversation not found");
+                }
+                Err(error) => return Err(error.into()),
+            }
+        };
+        context.tools = self.context.tools.clone();
+        self.context = context;
+        self.events = events;
+        let mut ui = self.ui.lock().unwrap();
+        ui.append_message_str(&format!("Resumed {answer}"));
+        let earlier_messages = self.context.messages.len().saturating_sub(5);
+        if earlier_messages > 0 {
+            ui.append_message_str(&format!("{earlier_messages} earlier messages"));
+        }
+        for message in self.context.messages.iter().skip(earlier_messages) {
+            ui.append_message(message);
+        }
         Ok(())
     }
     fn clear_command(&mut self) -> Result<(), Box<dyn std::error::Error>> {

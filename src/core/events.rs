@@ -1,6 +1,6 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufWriter, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -16,7 +16,7 @@ pub fn list_conversations() -> std::io::Result<Vec<PathBuf>> {
     Ok(conversations)
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum EventValue {
     Pwd(String),
@@ -27,7 +27,7 @@ pub enum EventValue {
     Command(String),
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct Event {
     #[serde(flatten)]
     pub event: EventValue,
@@ -42,6 +42,33 @@ pub struct EventLog {
 }
 
 impl EventLog {
+    pub fn read_context(path: &Path) -> io::Result<crate::core::Context> {
+        use crate::core::{Context, Message};
+        let mut context = Context::default();
+        for line in BufReader::new(File::open(path)?).lines() {
+            let event: Event = serde_json::from_str(&line?)?;
+            match event.event {
+                EventValue::SystemPrompt(prompt) => context.system_prompt = Some(prompt),
+                EventValue::UserMessage(value) => context
+                    .messages
+                    .push(Message::User(serde_json::from_value(value)?)),
+                EventValue::AssistantMessage(value) => context
+                    .messages
+                    .push(Message::Assistant(serde_json::from_value(value)?)),
+                EventValue::ToolResult(value) => context
+                    .messages
+                    .push(Message::ToolResult(serde_json::from_value(value)?)),
+                EventValue::Command(command) if command == "/clear" => context = Context::default(),
+                _ => {}
+            }
+        }
+        Ok(context)
+    }
+
+    pub fn open(path: &Path) -> io::Result<Self> {
+        Ok(Self::from(OpenOptions::new().append(true).open(path)?))
+    }
+
     pub fn create() -> std::io::Result<Self> {
         let working_directory = std::env::current_dir()?;
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();

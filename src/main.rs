@@ -12,9 +12,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui: Arc<Mutex<dyn ui::Ui>> = Arc::new(Mutex::new(tui.clone()));
     let mut plugins = plugins::PluginManager::new();
     let ask_ui = Arc::clone(&ui);
-    plugins.register_method("ask_user", move |_params: serde_json::Value| {
+    plugins.register_method("ask_user", move |params: serde_json::Value| {
         Ok(serde_json::json!(
-            ask_ui.lock().unwrap().wait_for_next_prompt()?
+            ask_ui
+                .lock()
+                .unwrap()
+                .ask(params["message"].as_str().unwrap())?
         ))
     });
     plugins.start(&config)?;

@@ -26,7 +26,7 @@ use ratatui::{
 use super::Ui;
 mod text_input;
 mod tools;
-use text_input::{INPUT_BACKGROUND, INPUT_PADDING, TextInput, render_input};
+use text_input::{ASK_BACKGROUND, INPUT_BACKGROUND, INPUT_PADDING, TextInput, render_input};
 
 #[derive(Clone)]
 pub struct Tui {
@@ -38,6 +38,8 @@ pub struct Tui {
 struct State {
     pending_lines: Vec<Line<'static>>,
     input_responses: VecDeque<String>,
+    asking: bool,
+    answer: Option<String>,
     working_since: Option<Instant>,
     shutdown: bool,
 }
@@ -49,10 +51,14 @@ impl Tui {
         let submit_state = Arc::clone(&state);
         text_input.on_submit(move |text| {
             let (lock, wake) = &*submit_state;
-            lock.lock()
-                .unwrap()
-                .input_responses
-                .push_back(text.to_owned());
+            let mut state = lock.lock().unwrap();
+            if state.asking {
+                state.answer = Some(text.to_owned());
+                state.asking = false;
+                state.pending_lines.push(user_message_line(text));
+            } else {
+                state.input_responses.push_back(text.to_owned());
+            }
             wake.notify_all();
         });
         Self {
@@ -101,12 +107,13 @@ impl Tui {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         history_has_content: &mut bool,
     ) -> io::Result<bool> {
-        let (pending_lines, shutdown, working_since) = {
+        let (pending_lines, shutdown, working_since, asking) = {
             let mut state = self.state.0.lock().unwrap();
             (
                 std::mem::take(&mut state.pending_lines),
                 state.shutdown,
                 state.working_since,
+                state.asking,
             )
         };
         let working = working_since.is_some();
@@ -122,7 +129,7 @@ impl Tui {
             .text_input
             .lock()
             .unwrap()
-            .wrapped_lines((size.width - 2 * INPUT_PADDING) as usize);
+            .wrapped_lines((size.width - 2 * INPUT_PADDING) as usize, asking);
         let input_height = input_lines
             .len()
             .min(size.height.saturating_sub(4) as usize) as u16;
@@ -167,11 +174,22 @@ impl Tui {
             }
             for separator in [chunks[4], chunks[6]] {
                 frame.render_widget(
-                    Paragraph::new("").style(Style::default().bg(INPUT_BACKGROUND)),
+                    Paragraph::new("").style(Style::default().bg(if asking {
+                        ASK_BACKGROUND
+                    } else {
+                        INPUT_BACKGROUND
+                    })),
                     separator,
                 );
             }
-            render_input(frame, chunks[5], input_lines, cursor_column, cursor_row);
+            render_input(
+                frame,
+                chunks[5],
+                input_lines,
+                cursor_column,
+                cursor_row,
+                asking,
+            );
         })?;
         if shutdown {
             return Ok(true);
@@ -301,6 +319,25 @@ impl Ui for Tui {
         } else {
             state.input_responses.pop_front().unwrap()
         })
+    }
+
+    fn ask(&mut self, message: &str) -> io::Result<String> {
+        let (lock, wake) = &*self.state;
+        let mut state = lock.lock().unwrap();
+        assert!(!state.asking, "an answer is already pending");
+        state.pending_lines.extend(
+            message
+                .lines()
+                .map(|line| Line::styled(line.to_owned(), Style::default().fg(Color::Yellow))),
+        );
+        state.asking = true;
+        while state.answer.is_none() && !state.shutdown {
+            state = wake.wait(state).unwrap();
+        }
+        if state.shutdown {
+            return Err(io::Error::from(io::ErrorKind::Interrupted));
+        }
+        Ok(state.answer.take().unwrap())
     }
 
     fn start_working(&mut self) {

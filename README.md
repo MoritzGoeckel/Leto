@@ -17,4 +17,4 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 - Input queue
 - Clear seems to not work. Also add feedback
 - Resume conversation
-- Remove notifications
+- Remove read/write/edit

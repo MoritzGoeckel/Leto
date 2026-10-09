@@ -6,6 +6,7 @@ pub mod tui;
 
 pub trait Ui: Send {
     fn wait_for_next_prompt(&mut self) -> io::Result<String>;
+    fn ask(&mut self, message: &str) -> io::Result<String>;
     fn start_working(&mut self);
     fn stop_working(&mut self);
     fn append_message_str(&mut self, note: &str);
