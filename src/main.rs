@@ -24,7 +24,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(serde_json::Value::Null)
     });
     plugins.start(&config)?;
-    let app = core::Loop::new(ui, config, Arc::new(Mutex::new(plugins)))?;
+    let resume = std::env::args().any(|argument| argument == "--resume");
+    let context = resume
+        .then(|| core::events::load_context("conversation.jsonl"))
+        .transpose()?;
+    let app = core::Loop::new(ui, config, Arc::new(Mutex::new(plugins)), context)?;
     std::thread::scope(|scope| {
         let mut run_tui = tui.clone();
         scope.spawn(move || {

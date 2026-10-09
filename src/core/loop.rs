@@ -28,6 +28,7 @@ impl Loop {
         ui: Arc<Mutex<dyn Ui>>,
         config: Arc<crate::config::Config>,
         plugins: Arc<Mutex<PluginManager>>,
+        resumed_context: Option<Context>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut provider = OpenAiChatGpt::init((*config).clone())?;
         if let Err(error) = provider.auth_refresh() {
@@ -47,7 +48,7 @@ impl Loop {
                 .unwrap()
                 .note(&format!("Loaded {}", path.display()));
         }
-        let context = Context {
+        let mut context = Context {
             system_prompt: agents_md.map(|(_, content)| content),
             tools: Some(
                 tools
@@ -58,6 +59,10 @@ impl Loop {
             ),
             ..Context::default()
         };
+        if let Some(resumed_context) = resumed_context {
+            context.system_prompt = resumed_context.system_prompt;
+            context.messages = resumed_context.messages;
+        }
         let mut events = EventLog::create(
             "conversation.jsonl",
             std::env::current_dir()?.display().to_string(),
