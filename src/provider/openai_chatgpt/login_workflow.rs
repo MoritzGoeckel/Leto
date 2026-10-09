@@ -82,7 +82,7 @@ fn start_callback_listener() -> io::Result<std::sync::mpsc::Receiver<String>> {
             let body = if is_callback {
                 "ChatGPT callback received. You can close this window."
             } else {
-                "Atlas callback listener is reachable. Complete sign-in using the authorization URL in your terminal."
+                "Orpheus callback listener is reachable. Complete sign-in using the authorization URL in your terminal."
             };
             write!(connection, "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
             if is_callback {

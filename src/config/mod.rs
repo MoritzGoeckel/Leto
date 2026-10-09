@@ -18,7 +18,7 @@ pub struct ModelConfig {
 
 impl Config {
     pub fn load() -> io::Result<Self> {
-        let path = std::env::current_dir()?.join("atlas.json");
+        let path = std::env::current_dir()?.join(".orpheus/config.json");
         let data = match fs::read_to_string(&path) {
             Ok(contents) => serde_json::from_str(&contents)
                 .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
@@ -52,7 +52,7 @@ impl Config {
         let path = self.path.parent().unwrap().join(
             self.data["models"]
                 .as_str()
-                .expect("atlas.json must contain a models path"),
+                .expect(".orpheus/config.json must contain a models path"),
         );
         let models: BTreeMap<String, BTreeMap<String, Model>> =
             serde_json::from_slice(&fs::read(path)?)
@@ -71,7 +71,7 @@ impl Config {
         let data = self
             .data
             .as_object_mut()
-            .expect("atlas.json must contain a JSON object");
+            .expect(".orpheus/config.json must contain a JSON object");
         data.entry("provider").or_insert_with(|| json!({}))[name] = value;
     }
 

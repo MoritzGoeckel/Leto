@@ -69,7 +69,7 @@ pub fn stream(
             model.base_url.trim_end_matches('/')
         ))
         .bearer_auth(token)
-        .header("user-agent", "atlas (rust)")
+        .header("user-agent", "orpheus (rust)")
         .header("accept", "text/event-stream")
         .json(&body)
         .send()?;

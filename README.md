@@ -9,7 +9,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 - Model provider via extensions
 - Gemini
-- Configure model
+- Anthropic
 - SSE parsing
 - Retry on llm provider error
 - Paste into input

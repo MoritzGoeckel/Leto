@@ -49,7 +49,7 @@ pub fn begin_login(device_id: &str) -> ChatGptLogin {
     let nonce = random_value();
     let query = [
         ("client_id", "dynamic_agent_client"),
-        ("agent_name_hint", "Atlas"),
+        ("agent_name_hint", "Orpheus"),
         (
             "ext_agent_host_id",
             &format!("urn:uuid:{}", device_id.to_lowercase()),
