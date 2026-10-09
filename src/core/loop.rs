@@ -28,7 +28,6 @@ impl Loop {
         ui: Arc<Mutex<dyn Ui>>,
         config: Arc<crate::config::Config>,
         plugins: Arc<Mutex<PluginManager>>,
-        resumed_context: Option<Context>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut provider = OpenAiChatGpt::init((*config).clone())?;
         if let Err(error) = provider.auth_refresh() {
@@ -48,7 +47,7 @@ impl Loop {
                 .unwrap()
                 .note(&format!("Loaded {}", path.display()));
         }
-        let mut context = Context {
+        let context = Context {
             system_prompt: agents_md.map(|(_, content)| content),
             tools: Some(
                 tools
@@ -59,16 +58,9 @@ impl Loop {
             ),
             ..Context::default()
         };
-        if let Some(resumed_context) = resumed_context {
-            context.system_prompt = resumed_context.system_prompt;
-            context.messages = resumed_context.messages;
-        }
-        let mut events = EventLog::create(
-            "conversation.jsonl",
-            std::env::current_dir()?.display().to_string(),
-        )?;
+        let mut events = EventLog::create()?;
         if let Some(system_prompt) = &context.system_prompt {
-            events.append(EventValue::SystemPrompt(system_prompt.clone()))?;
+            events.append(EventValue::SystemPrompt(system_prompt.clone()), false)?;
         }
         Ok(Self {
             ui,
@@ -101,7 +93,8 @@ impl Loop {
             self.ui.lock().unwrap().clear_notifications();
             if is_command(&input) {
                 self.ui.lock().unwrap().on_command(&input);
-                self.events.append(EventValue::Command(input.clone()))?;
+                self.events
+                    .append(EventValue::Command(input.clone()), false)?;
                 self.run_command(&input)?;
                 continue;
             }
@@ -123,10 +116,10 @@ impl Loop {
                 .lock()
                 .unwrap()
                 .transform_user_message(user_message)?;
-            self.events
-                .append(EventValue::UserMessage(serde_json::to_value(
-                    &user_message,
-                )?))?;
+            self.events.append(
+                EventValue::UserMessage(serde_json::to_value(&user_message)?),
+                true,
+            )?;
             let user_message = Message::User(user_message);
             self.ui.lock().unwrap().on_message(&user_message);
             self.context.messages.push(user_message);
@@ -151,17 +144,17 @@ impl Loop {
                     .content
                     .iter()
                     .any(|content| matches!(content, crate::core::AssistantContent::ToolCall(_)));
-                self.events
-                    .append(EventValue::AssistantMessage(serde_json::to_value(
-                        &message,
-                    )?))?;
+                self.events.append(
+                    EventValue::AssistantMessage(serde_json::to_value(&message)?),
+                    true,
+                )?;
                 let assistant_message = Message::Assistant(message.clone());
                 self.ui.lock().unwrap().on_message(&assistant_message);
                 self.context.messages.push(assistant_message);
                 for result in self.tools.run_tool_calls(message) {
                     let result = self.plugins.lock().unwrap().transform_tool_result(result)?;
                     self.events
-                        .append(EventValue::ToolResult(serde_json::to_value(&result)?))?;
+                        .append(EventValue::ToolResult(serde_json::to_value(&result)?), true)?;
                     let result = Message::ToolResult(result);
                     self.ui.lock().unwrap().on_message(&result);
                     self.context.messages.push(result);
