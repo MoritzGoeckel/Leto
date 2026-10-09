@@ -49,7 +49,7 @@ impl Config {
     }
 
     pub fn models(&self, provider: &str) -> io::Result<BTreeMap<String, Model>> {
-        let path = self.path.parent().unwrap().join(
+        let path = PathBuf::from(
             self.data["models"]
                 .as_str()
                 .expect(".orpheus/config.json must contain a models path"),
