@@ -110,10 +110,12 @@ impl Tui {
             )
         };
         let working = working_since.is_some();
-        *history_has_content |= !pending_lines.is_empty();
         let mut pending_lines = pending_lines;
         if !pending_lines.is_empty() {
-            pending_lines.push(Line::default());
+            if *history_has_content {
+                pending_lines.insert(0, Line::default());
+            }
+            *history_has_content = true;
         }
         let size = terminal.size()?;
         let (input_lines, cursor_column, cursor_row) = self
@@ -309,7 +311,7 @@ impl Ui for Tui {
         self.state.0.lock().unwrap().working_since = None;
     }
 
-    fn note(&mut self, note: &str) {
+    fn append_message_str(&mut self, note: &str) {
         self.state
             .0
             .lock()
@@ -318,13 +320,13 @@ impl Ui for Tui {
             .extend(note.lines().map(|line| Line::from(line.to_owned())));
     }
 
-    fn on_message(&mut self, message: &crate::core::Message) {
+    fn append_message(&mut self, message: &crate::core::Message) {
         let mut lines = Vec::new();
         append_message_lines(&mut lines, message);
         self.state.0.lock().unwrap().pending_lines.extend(lines);
     }
 
-    fn on_command(&mut self, command: &str) {
+    fn append_command(&mut self, command: &str) {
         self.state
             .0
             .lock()

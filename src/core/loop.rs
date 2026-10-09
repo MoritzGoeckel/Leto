@@ -45,7 +45,7 @@ impl Loop {
         if let Some((path, _)) = &agents_md {
             ui.lock()
                 .unwrap()
-                .note(&format!("Loaded {}", path.display()));
+                .append_message_str(&format!("Loaded {}", path.display()));
         }
         let mut loop_state = Self {
             ui,
@@ -74,7 +74,7 @@ impl Loop {
         while !self.exit {
             let input = self.ui.lock().unwrap().wait_for_next_prompt()?;
             if is_command(&input) {
-                self.ui.lock().unwrap().on_command(&input);
+                self.ui.lock().unwrap().append_command(&input);
                 self.events
                     .append(EventValue::Command(input.clone()), false)?;
                 self.run_command(&input)?;
@@ -103,7 +103,7 @@ impl Loop {
                 true,
             )?;
             let user_message = Message::User(user_message);
-            self.ui.lock().unwrap().on_message(&user_message);
+            self.ui.lock().unwrap().append_message(&user_message);
             self.context.messages.push(user_message);
             self.ui.lock().unwrap().start_working();
             loop {
@@ -131,14 +131,14 @@ impl Loop {
                     true,
                 )?;
                 let assistant_message = Message::Assistant(message.clone());
-                self.ui.lock().unwrap().on_message(&assistant_message);
+                self.ui.lock().unwrap().append_message(&assistant_message);
                 self.context.messages.push(assistant_message);
                 for result in self.tools.run_tool_calls(message) {
                     let result = self.plugins.lock().unwrap().transform_tool_result(result)?;
                     self.events
                         .append(EventValue::ToolResult(serde_json::to_value(&result)?), true)?;
                     let result = Message::ToolResult(result);
-                    self.ui.lock().unwrap().on_message(&result);
+                    self.ui.lock().unwrap().append_message(&result);
                     self.context.messages.push(result);
                 }
                 if !has_tool_calls {
@@ -180,7 +180,7 @@ impl Loop {
                 self.ui
                     .lock()
                     .unwrap()
-                    .note(&format!("Unknown command: /{name}"));
+                    .append_message_str(&format!("Unknown command: /{name}"));
                 Ok(())
             }
         }
@@ -198,7 +198,7 @@ impl Loop {
             .rev()
             .map(|path| path.file_name().unwrap().to_string_lossy())
             .collect::<Vec<_>>();
-        self.ui.lock().unwrap().note(&format!(
+        self.ui.lock().unwrap().append_message_str(&format!(
             "{}\n/resume <conversation>.jsonl",
             conversations.join("\n")
         ));

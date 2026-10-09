@@ -32,7 +32,7 @@ pub fn login_and_save(
             login.authorization_url
         )
     };
-    ui.note(&message);
+    ui.append_message_str(&message);
     let callback_url = if let Some(receiver) = callback_receiver {
         receiver.recv()?
     } else {
