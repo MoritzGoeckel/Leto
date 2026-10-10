@@ -112,11 +112,13 @@ impl TextInput {
         self.cursor += text.len();
     }
 
-    pub fn paste(&mut self, text: &str) {
+    pub fn paste(&mut self, text: &str, width: usize) {
         let start = self.cursor;
         self.insert_text(text);
-        self.pasted.push((start, self.cursor));
-        self.pasted.sort_unstable();
+        if text.contains('\n') || text.chars().count() > width {
+            self.pasted.push((start, self.cursor));
+            self.pasted.sort_unstable();
+        }
     }
 
     pub fn handle_key_event(&mut self, key: KeyEvent) {

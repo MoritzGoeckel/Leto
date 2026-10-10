@@ -240,7 +240,11 @@ impl Tui {
                         self.text_input.lock().unwrap().handle_key_event(key);
                     }
                 }
-                Event::Paste(text) => self.text_input.lock().unwrap().paste(&text),
+                Event::Paste(text) => self
+                    .text_input
+                    .lock()
+                    .unwrap()
+                    .paste(&text, size.width.saturating_sub(2 * INPUT_PADDING) as usize),
                 _ => {}
             }
         }
