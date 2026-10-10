@@ -13,6 +13,7 @@ pub(super) const INPUT_PADDING: u16 = 2;
 pub struct TextInput {
     text: String,
     cursor: usize,
+    pasted: Vec<(usize, usize)>,
     on_submit: Option<Box<dyn FnMut(&str) + Send>>,
 }
 
@@ -21,6 +22,7 @@ impl TextInput {
         Self {
             text: String::new(),
             cursor: 0,
+            pasted: Vec::new(),
             on_submit: None,
         }
     }
@@ -40,11 +42,22 @@ impl TextInput {
                 0,
             );
         }
+        let mut display_text = self.text.clone();
+        let mut display_cursor = self.cursor;
+        for &(start, end) in self.pasted.iter().rev() {
+            let label = format!("[pasted {} chars]", self.text[start..end].chars().count());
+            display_text.replace_range(start..end, &label);
+            if self.cursor >= end {
+                display_cursor = display_cursor - (end - start) + label.len();
+            } else if self.cursor > start {
+                display_cursor = start + label.len();
+            }
+        }
         let mut lines = vec![String::new()];
         let mut column = 0;
         let mut offset = 0;
         let mut cursor_position = (0, 0);
-        for logical_line in self.text.split('\n') {
+        for logical_line in display_text.split('\n') {
             let span = Span::raw(logical_line);
             for grapheme in span.styled_graphemes(Style::default()) {
                 let symbol_width = Span::raw(grapheme.symbol).width();
@@ -52,24 +65,24 @@ impl TextInput {
                     lines.push(String::new());
                     column = 0;
                 }
-                if offset == self.cursor {
+                if offset == display_cursor {
                     cursor_position = (column, lines.len() - 1);
                 }
                 lines.last_mut().unwrap().push_str(grapheme.symbol);
                 column += symbol_width;
                 offset += grapheme.symbol.len();
             }
-            if offset == self.cursor {
+            if offset == display_cursor {
                 cursor_position = if column == width {
                     (0, lines.len())
                 } else {
                     (column, lines.len() - 1)
                 };
-                if column == width && offset == self.text.len() {
+                if column == width && offset == display_text.len() {
                     lines.push(String::new());
                 }
             }
-            if offset < self.text.len() {
+            if offset < display_text.len() {
                 lines.push(String::new());
                 column = 0;
                 offset += 1;
@@ -87,8 +100,23 @@ impl TextInput {
     }
 
     pub fn insert_text(&mut self, text: &str) {
+        for (start, end) in &mut self.pasted {
+            if *start >= self.cursor {
+                *start += text.len();
+                *end += text.len();
+            } else if *end > self.cursor {
+                *end += text.len();
+            }
+        }
         self.text.insert_str(self.cursor, text);
         self.cursor += text.len();
+    }
+
+    pub fn paste(&mut self, text: &str) {
+        let start = self.cursor;
+        self.insert_text(text);
+        self.pasted.push((start, self.cursor));
+        self.pasted.sort_unstable();
     }
 
     pub fn handle_key_event(&mut self, key: KeyEvent) {
@@ -110,6 +138,7 @@ impl TextInput {
                     callback(&self.text);
                 }
                 self.text.clear();
+                self.pasted.clear();
                 self.cursor = 0;
             }
             KeyCode::Char(character) => self.insert_text(&character.to_string()),
@@ -169,7 +198,7 @@ impl TextInput {
 
     fn delete_previous_character(&mut self) {
         if let Some((index, _)) = self.text[..self.cursor].char_indices().next_back() {
-            self.text.replace_range(index..self.cursor, "");
+            self.remove_range(index, self.cursor);
             self.cursor = index;
         }
     }
@@ -177,8 +206,23 @@ impl TextInput {
     fn delete_next_character(&mut self) {
         if let Some(character) = self.text[self.cursor..].chars().next() {
             let end = self.cursor + character.len_utf8();
-            self.text.replace_range(self.cursor..end, "");
+            self.remove_range(self.cursor, end);
         }
+    }
+
+    fn remove_range(&mut self, start: usize, end: usize) {
+        self.text.replace_range(start..end, "");
+        self.pasted.retain_mut(|(paste_start, paste_end)| {
+            if *paste_end <= start {
+                return true;
+            }
+            if *paste_start >= end {
+                *paste_start -= end - start;
+                *paste_end -= end - start;
+                return true;
+            }
+            false
+        });
     }
 
     fn delete_previous_word(&mut self) {
@@ -191,7 +235,7 @@ impl TextInput {
             }
             start = index;
         }
-        self.text.replace_range(start..self.cursor, "");
+        self.remove_range(start, self.cursor);
         self.cursor = start;
     }
 }

@@ -240,7 +240,7 @@ impl Tui {
                         self.text_input.lock().unwrap().handle_key_event(key);
                     }
                 }
-                Event::Paste(text) => self.text_input.lock().unwrap().insert_text(&text),
+                Event::Paste(text) => self.text_input.lock().unwrap().paste(&text),
                 _ => {}
             }
         }
