@@ -7,7 +7,10 @@ use crate::{
 };
 use reqwest::blocking::Client;
 use serde_json::{Value, json};
-use std::time::Duration;
+use std::{
+    io::{BufRead, BufReader},
+    time::Duration,
+};
 
 pub fn stream(
     token: &str,
@@ -84,24 +87,36 @@ pub fn stream(
             }
         }
     }
-    let (success, data) = response.unwrap();
-    if !success {
-        return Err(data.into());
-    }
+    let response = response.unwrap();
+    let mut events = Vec::new();
     let mut text = String::new();
     let mut thinking = String::new();
     let mut calls = Vec::new();
+
     let mut usage = Usage::default();
     let mut stop = StopReason::Stop;
-    for line in data.lines().filter_map(|line| line.strip_prefix("data: ")) {
+    for line in BufReader::new(response).lines() {
+        let line = line?;
+        let Some(line) = line.strip_prefix("data: ") else {
+            continue;
+        };
         if line == "[DONE]" {
             continue;
         }
         let event: Value = serde_json::from_str(line)?;
         match event["type"].as_str().unwrap_or("") {
-            "response.output_text.delta" => text.push_str(event["delta"].as_str().unwrap_or("")),
+            "response.output_text.delta" => {
+                let delta = event["delta"].as_str().unwrap().to_owned();
+                text.push_str(&delta);
+                ui.append_stream_delta(&delta);
+            }
             "response.reasoning_summary_text.delta" => {
-                thinking.push_str(event["delta"].as_str().unwrap_or(""))
+                let delta = event["delta"].as_str().unwrap();
+                thinking.push_str(delta);
+                ui.append_stream_delta(delta);
+            }
+            "response.function_call_arguments.delta" => {
+                ui.append_stream_delta(event["delta"].as_str().unwrap());
             }
             "response.output_item.done" if event["item"]["type"] == "function_call" => {
                 let item = &event["item"];
@@ -170,12 +185,11 @@ pub fn stream(
         StopReason::ToolUse => CompletionReason::ToolUse,
         _ => CompletionReason::Stop,
     };
-    Ok(vec![
-        crate::core::AssistantMessageEvent::Start {
-            partial: message.clone(),
-        },
-        crate::core::AssistantMessageEvent::Done { reason, message },
-    ])
+    events.push(crate::core::AssistantMessageEvent::Start {
+        partial: message.clone(),
+    });
+    events.push(crate::core::AssistantMessageEvent::Done { reason, message });
+    Ok(events)
 }
 
 fn send_request(
@@ -183,7 +197,7 @@ fn send_request(
     model: &Model,
     body: &Value,
     timeout: Duration,
-) -> Result<(bool, String), Box<dyn std::error::Error>> {
+) -> Result<reqwest::blocking::Response, Box<dyn std::error::Error>> {
     let response = Client::builder()
         .timeout(timeout)
         .build()?
@@ -197,11 +211,11 @@ fn send_request(
         .json(body)
         .send()?;
     let status = response.status();
-    let data = response.text()?;
     if !status.is_success() {
+        let data = response.text()?;
         return Err(format!("OpenAI Responses API returned {status}: {data}").into());
     }
-    Ok((true, data))
+    Ok(response)
 }
 fn system_text(content: &crate::core::SystemContent) -> String {
     match content {

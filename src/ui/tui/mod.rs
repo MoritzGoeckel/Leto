@@ -37,6 +37,7 @@ pub struct Tui {
 #[derive(Default)]
 struct State {
     pending_lines: Vec<Line<'static>>,
+    stream_text: String,
     history_has_content: bool,
     input_responses: VecDeque<String>,
     input_options: AskOptions,
@@ -114,7 +115,15 @@ impl Tui {
     }
 
     fn tick(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<bool> {
-        let (pending_lines, shutdown, working_since, input_options, history_has_content, alert) = {
+        let (
+            pending_lines,
+            shutdown,
+            working_since,
+            input_options,
+            history_has_content,
+            alert,
+            stream_text,
+        ) = {
             let mut state = self.state.0.lock().unwrap();
             (
                 std::mem::take(&mut state.pending_lines),
@@ -123,25 +132,35 @@ impl Tui {
                 state.input_options.clone(),
                 state.history_has_content,
                 state.alert.clone(),
+                state.stream_text.clone(),
             )
         };
-        let working = working_since.is_some();
         let size = terminal.size()?;
-        let (input_lines, cursor_column, cursor_row) = self
-            .text_input
-            .lock()
-            .unwrap()
-            .wrapped_lines((size.width - 2 * INPUT_PADDING) as usize, &input_options);
+        let (input_lines, cursor_column, cursor_row) =
+            self.text_input.lock().unwrap().wrapped_lines(
+                size.width.saturating_sub(2 * INPUT_PADDING).max(1) as usize,
+                &input_options,
+            );
+        let footer_height = 6;
         let input_height = input_lines
             .len()
-            .min(size.height.saturating_sub(4) as usize) as u16;
-        let working_separator_height = u16::from(working && history_has_content);
-        let working_height = u16::from(working);
-        let viewport_height = (input_height as usize
-            + 4
-            + working_separator_height as usize
-            + working_height as usize)
-            .min(size.height as usize) as u16;
+            .min(size.height.saturating_sub(footer_height) as usize)
+            as u16;
+        let streaming = !stream_text.is_empty();
+        let stream = Paragraph::new(if stream_text.is_empty() || !history_has_content {
+            stream_text
+        } else {
+            format!("\n{stream_text}")
+        })
+        .wrap(Wrap { trim: false });
+        let stream_lines = stream.line_count(size.width);
+        let stream_height = if !streaming {
+            0
+        } else {
+            stream_lines.min(size.height.saturating_sub(footer_height + input_height) as usize)
+                as u16
+        };
+        let viewport_height = (footer_height + input_height + stream_height).min(size.height);
         resize_viewport(terminal, viewport_height)?;
         if !pending_lines.is_empty() {
             let paragraph = Paragraph::new(pending_lines).wrap(Wrap { trim: false });
@@ -152,35 +171,51 @@ impl Tui {
         }
         terminal.draw(|frame| {
             let area = frame.area();
-            let chunks = Layout::vertical([
-                Constraint::Min(0),
-                Constraint::Length(working_separator_height),
-                Constraint::Length(working_height),
+            let [
+                preview,
+                _,
+                working,
+                _,
+                input_top,
+                input,
+                input_bottom,
+                alert_row,
+            ] = Layout::vertical([
+                Constraint::Length(stream_height),
+                Constraint::Length(1),
+                Constraint::Length(1),
                 Constraint::Length(1),
                 Constraint::Length(1),
                 Constraint::Length(input_height),
                 Constraint::Length(1),
                 Constraint::Length(1),
             ])
-            .split(area);
+            .areas(area);
+            frame.render_widget(
+                stream.scroll((
+                    stream_lines.saturating_sub(stream_height as usize) as u16,
+                    0,
+                )),
+                preview,
+            );
             if let Some(alert) = &alert {
                 frame.render_widget(
                     Paragraph::new(format!("  {alert}")).style(Style::default().fg(Color::Yellow)),
-                    chunks[7],
+                    alert_row,
                 );
             }
-            if let Some(started) = working_since {
+            let status = if let Some(started) = working_since {
                 let spinner =
                     ['/', '-', '\\', '|'][(started.elapsed().as_millis() / 150 % 4) as usize];
-                frame.render_widget(
-                    Paragraph::new(Line::from(vec![
-                        Span::styled("Working ", Style::default().fg(Color::DarkGray)),
-                        Span::styled(spinner.to_string(), Style::default().fg(Color::Yellow)),
-                    ])),
-                    chunks[2],
-                );
-            }
-            for separator in [chunks[4], chunks[6]] {
+                Line::from(vec![
+                    Span::styled("Working ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(spinner.to_string(), Style::default().fg(Color::Yellow)),
+                ])
+            } else {
+                Line::from(Span::styled("", Style::default().fg(Color::DarkGray)))
+            };
+            frame.render_widget(Paragraph::new(status), working);
+            for separator in [input_top, input_bottom] {
                 frame.render_widget(
                     Paragraph::new("").style(Style::default().bg(input_options.background)),
                     separator,
@@ -188,7 +223,7 @@ impl Tui {
             }
             render_input(
                 frame,
-                chunks[5],
+                input,
                 input_lines,
                 cursor_column,
                 cursor_row,
@@ -234,24 +269,13 @@ fn resize_viewport(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     height: u16,
 ) -> io::Result<()> {
+    terminal.autoresize()?;
     let area = terminal.get_frame().area();
     if height == area.height {
         return Ok(());
     }
     terminal.clear()?;
-    let viewport_top = if height > area.height {
-        let size = terminal.size()?;
-        let scroll_height = (area.y + height).saturating_sub(size.height);
-        execute!(
-            terminal.backend_mut(),
-            MoveTo(0, size.height - 1),
-            Print("\r\n".repeat(scroll_height as usize)),
-        )?;
-        area.y - scroll_height
-    } else {
-        area.y
-    };
-    execute!(terminal.backend_mut(), MoveTo(0, viewport_top))?;
+    execute!(terminal.backend_mut(), MoveTo(0, area.y))?;
     *terminal = Terminal::with_options(
         CrosstermBackend::new(io::stdout()),
         TerminalOptions {
@@ -302,11 +326,13 @@ fn append_message_lines(lines: &mut Vec<Line<'static>>, message: &crate::core::M
             for content in &message.content {
                 match content {
                     AssistantContent::Text(text) => {
-                        lines.push(Line::from(format!("{}", text.text)))
+                        lines.extend(text.text.lines().map(|line| Line::from(line.to_owned())))
                     }
-                    AssistantContent::Thinking(thinking) => {
-                        lines.push(Line::from(format!("thinking> {}", thinking.thinking)))
-                    }
+                    AssistantContent::Thinking(thinking) => lines.extend(
+                        format!("thinking> {}", thinking.thinking)
+                            .lines()
+                            .map(|line| Line::from(line.to_owned())),
+                    ),
                     AssistantContent::ToolCall(call) => tools::append_call(lines, call),
                 }
             }
@@ -386,7 +412,15 @@ impl Ui for Tui {
     fn append_message(&mut self, message: &crate::core::Message) {
         let mut lines = Vec::new();
         append_message_lines(&mut lines, message);
-        self.state.0.lock().unwrap().append_lines(lines);
+        let mut state = self.state.0.lock().unwrap();
+        if matches!(message, crate::core::Message::Assistant(_)) {
+            state.stream_text.clear();
+        }
+        state.append_lines(lines);
+    }
+
+    fn append_stream_delta(&mut self, delta: &str) {
+        self.state.0.lock().unwrap().stream_text.push_str(delta);
     }
 
     fn append_command(&mut self, command: &str) {
@@ -394,5 +428,41 @@ impl Ui for Tui {
             command.to_owned(),
             Style::default().fg(Color::Cyan),
         )]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completed_stream_enters_history_once_with_line_breaks() {
+        let mut tui = Tui::new();
+        tui.append_message_str("history");
+        tui.append_stream_delta("first\n");
+        tui.append_stream_delta("second");
+        {
+            let state = tui.state.0.lock().unwrap();
+            assert_eq!(state.pending_lines.len(), 1);
+            assert_eq!(state.pending_lines[0].to_string(), "history");
+            assert_eq!(state.stream_text, "first\nsecond");
+        }
+        let message = serde_json::from_value(serde_json::json!({
+            "content": [{"type": "text", "text": "first\nsecond"}],
+            "api": "test", "provider": "test", "model": "test",
+            "usage": crate::core::Usage::default(), "stopReason": "stop", "timestamp": 0
+        }))
+        .unwrap();
+        tui.append_message(&crate::core::Message::Assistant(message));
+        let state = tui.state.0.lock().unwrap();
+        assert!(state.stream_text.is_empty());
+        assert_eq!(
+            state
+                .pending_lines
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+            ["history", "", "first", "second"]
+        );
     }
 }

@@ -52,4 +52,5 @@ pub trait Ui: Send {
     fn append_message_str_styled(&mut self, note: &str, options: StrOptions);
     fn append_message(&mut self, message: &Message);
     fn append_command(&mut self, command: &str);
+    fn append_stream_delta(&mut self, delta: &str);
 }

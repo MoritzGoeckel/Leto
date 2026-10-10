@@ -12,4 +12,3 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 - Anthropic
 - SSE parsing
 - Paste into input
-- Stop request
